@@ -218,8 +218,6 @@ public class PlayerActivity extends AppCompatActivity {
                 } else {
                     videoAspect = 0f;
                 }
-                android.util.Log.d("HGPlayer", "onVideoSizeChanged " + vs.width + "x" + vs.height
-                        + " rot=" + vs.unappliedRotationDegrees + " aspect=" + videoAspect);
                 applyVideoAspect();
             }
 
@@ -936,9 +934,6 @@ public class PlayerActivity extends AppCompatActivity {
         }
         lp.gravity = android.view.Gravity.CENTER;
         videoView.setLayoutParams(lp);
-        android.util.Log.d("HGPlayer", "applyVideoAspect mode=" + displayMode
-                + " host=" + pw + "x" + ph + " videoAspect=" + videoAspect
-                + " -> view " + lp.width + "x" + lp.height);
     }
 
     // ------------------------------------------------ 顶/底栏视频帧采样（真 Liquid Glass）
