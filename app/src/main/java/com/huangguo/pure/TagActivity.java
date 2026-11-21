@@ -124,8 +124,7 @@ public class TagActivity extends AppCompatActivity {
         super.onConfigurationChanged(newConfig);
         boolean dark = Theme.isDark(this);
         if (Theme.mode() == Theme.AUTO && dark != Ui.darkGlass) {
-            Ui.applyPalette(dark);
-            recreate();
+            Ui.retheme(this);
         }
     }
 
@@ -134,8 +133,7 @@ public class TagActivity extends AppCompatActivity {
         super.onResume();
         // 兼底：配置变化发生在后台时，回到前台再补一次
         if (Ui.darkGlass != Theme.isDark(this)) {
-            Ui.applyPalette(Theme.isDark(this));
-            recreate();
+            Ui.retheme(this);
         }
     }
 }

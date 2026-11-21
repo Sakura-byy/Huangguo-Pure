@@ -38,6 +38,14 @@ public class SwipeFrame extends FrameLayout {
      */
     private boolean deferToInner;
 
+    /** false 时完全不拦截手势（多选拖选阶段用） */
+    private boolean enabled = true;
+
+    public SwipeFrame setSwipeEnabled(boolean v) {
+        enabled = v;
+        return this;
+    }
+
     private float downX, downY;
     private boolean intercepting;
     private boolean blocked;
@@ -57,6 +65,7 @@ public class SwipeFrame extends FrameLayout {
 
     @Override
     public boolean onInterceptTouchEvent(MotionEvent ev) {
+        if (!enabled) return false;
         switch (ev.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 downX = ev.getX();

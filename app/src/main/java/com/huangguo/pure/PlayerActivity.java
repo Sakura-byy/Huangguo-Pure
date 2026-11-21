@@ -38,6 +38,13 @@ import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory;
+import androidx.media3.datasource.DataSource;
+import androidx.media3.datasource.DefaultDataSource;
+import androidx.media3.datasource.DefaultHttpDataSource;
+import androidx.media3.datasource.cache.CacheDataSource;
+import androidx.media3.datasource.cache.SimpleCache;
+import androidx.media3.database.StandaloneDatabaseProvider;
 import android.view.TextureView;
 
 import java.util.ArrayList;
@@ -82,8 +89,24 @@ public class PlayerActivity extends AppCompatActivity {
     /** 当前正在播的 m3u8 直链（下载用） */
     private String currentUrl = "";
     private boolean downloading = false;
+    /** 当前这条是本地缓存文件还是在线流：本地播挂了要能回落到在线 */
+    private boolean playingLocal = false;
 
     private ExoPlayer player;
+    /**
+     * 边播边缓存：SimpleCache 落磁盘，双击快进 / 回退命中缓存不再等网络。
+     * 下一集预载也复用同一个 cacheFactory——预载的数据写进同一份缓存，
+     * 真正切过去时直接读本地。
+     */
+    private static SimpleCache sMediaCache;
+    private SimpleCache mediaCache;
+    private CacheDataSource.Factory cacheFactory;
+    /** 下一集静默预载用的临时播放器：只 prepare 不播，把前几分钟写进缓存 */
+    private ExoPlayer nextLoader;
+    /** 已经预载过（或正在预载）的下一集 URL，避免重复建实例 */
+    private String nextPreppedUrl = "";
+    /** 上一集的 URL：切到下一集后删它的缓存，控制磁盘占用 */
+    private String lastEpUrl = "";
     private TextureView videoView;
     /** 视频宽高比（w/h），0 = 未知（铺满） */
     private float videoAspect = 0f;
@@ -109,7 +132,8 @@ public class PlayerActivity extends AppCompatActivity {
     private TextView epLabel;
     private TextView speedBtn;
     private TextView boostTip;
-    private TextView orientBtn;
+    private FrameLayout orientBtn;
+    private android.widget.ImageView orientIcon;
     private GridLayout epGrid;
     private TextView statusTip;
 
@@ -167,11 +191,24 @@ public class PlayerActivity extends AppCompatActivity {
         root.setBackgroundColor(0xFF000000);
         setContentView(root);
 
+        // 预缓存：最小缓冲 60s、最大 180s —— 起播 1 分钟内不用再等网络，
+        // 双击快进 10s 也基本落在已缓冲区间里
         androidx.media3.exoplayer.DefaultLoadControl loadControl =
                 new androidx.media3.exoplayer.DefaultLoadControl.Builder()
-                        .setBufferDurationsMs(15000, 60000, 1200, 2400)
+                        .setBufferDurationsMs(60000, 180000, 1500, 3000)
                         .build();
-        player = new ExoPlayer.Builder(this).setLoadControl(loadControl).build();
+        mediaCache = buildMediaCache();
+        cacheFactory = new CacheDataSource.Factory()
+                .setCache(mediaCache)
+                .setUpstreamDataSourceFactory(new DefaultDataSource.Factory(this,
+                        new DefaultHttpDataSource.Factory()
+                                .setUserAgent(Api.UA)
+                                .setAllowCrossProtocolRedirects(true)))
+                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR);
+        player = new ExoPlayer.Builder(this)
+                .setLoadControl(loadControl)
+                .setMediaSourceFactory(new DefaultMediaSourceFactory(cacheFactory))
+                .build();
         player.setHandleAudioBecomingNoisy(true);
         videoView = new TextureView(this);   // TextureView 不支持 background，黑底由 root 提供
         root.addView(videoView, new FrameLayout.LayoutParams(
@@ -229,6 +266,17 @@ public class PlayerActivity extends AppCompatActivity {
 
             @Override
             public void onPlayerError(@NonNull PlaybackException error) {
+                // 本地缓存文件播不动（被外部删了 / 拷贝没写完 / 时长 0）：
+                // 清记录 + 立刻回落在在线播放，别把用户卡在黑屏上
+                if (playingLocal) {
+                    playingLocal = false;
+                    Store.get(PlayerActivity.this).clearLocalFile(videoId, ep);
+                    statusTip.setVisibility(View.VISIBLE);
+                    statusTip.setText("缓存文件不可用，正在改为在线播放…");
+                    statusTip.setOnClickListener(null);
+                    prepare();
+                    return;
+                }
                 statusTip.setVisibility(View.VISIBLE);
                 statusTip.setText("播放出错，点击重试\n" + error.getErrorCodeName());
                 statusTip.setOnClickListener(v -> prepare());
@@ -283,6 +331,14 @@ public class PlayerActivity extends AppCompatActivity {
         // 会盖在返回键上，所以安全区要按状态栏高度让出来
         tp.topMargin = Ui.dp(this, 12) + statusBarHeight();
         overlay.addView(topPanel, tp);
+        // 单击顶栏（返回键以外区域）进剧集详情
+        topPanel.setOnClickListener(v -> {
+            if (streamUrl.isEmpty() && videoId > 0) {
+                saveHistory();
+                DetailActivity.open(this, videoId, ep);
+                finish();
+            }
+        });
 
         FrameLayout backWrap = new FrameLayout(this);
         backWrap.setClickable(true);
@@ -386,8 +442,8 @@ public class PlayerActivity extends AppCompatActivity {
         buildEpisodeStepButton(toolRow, true);
         buildEpisodeStepButton(toolRow, false);
 
-        // 下载按钮：移到「下一集」和「评论」中间，按最高画质存 Download/Huangguo/<剧名>/
-        buildDownloadButton(toolRow);
+        // 喜欢按钮：按集喜欢，写进账号（POST /api/videos/{id}/like?ep=N）
+        buildLikeButton(toolRow);
 
         // 评论按钮：跳详情页对应集数的评论区
         buildCommentEntry(toolRow);
@@ -653,63 +709,81 @@ public class PlayerActivity extends AppCompatActivity {
 
     // ------------------------------------------------------------------ 横屏
 
-    /** 工具条下载按钮：状态直接写在按钮上（图标 → 百分比 → 完成勾） */
-    private void buildDownloadButton(LinearLayout toolRow) {
-        final TextView btn = toolChip("下载");
-        btn.setOnClickListener(v -> {
-            if (downloading) return;
-            if (currentUrl == null || currentUrl.isEmpty()) {
-                flashTip("播放地址还没就绪", 1200);
-                return;
+    /**
+     * 喜欢按钮（原下载键位置）：按「剧 + 集」喜欢，落云端
+     * POST /api/videos/{id}/like?ep=N&token= → {ep, liked, ep_likes, likes}
+     */
+    private TextView likeBtn;
+    private boolean liked;
+
+    private void buildLikeButton(LinearLayout toolRow) {
+        likeBtn = toolChip("喜欢");
+        liked = videoId > 0 && Store.get(this).isLiked("videolike:" + videoId, ep);
+        syncLikeBtn();
+        likeBtn.setOnClickListener(v -> toggleLike());
+        toolRow.addView(likeBtn, chipLp(8));
+    }
+
+    private void syncLikeBtn() {
+        if (likeBtn == null) return;
+        // 只有两个字，不带任何符号
+        likeBtn.setText(liked ? "已喜欢" : "喜欢");
+        likeBtn.setTextColor(liked ? Ui.C_GOLD : Ui.C_TEXT);
+    }
+
+    private void toggleLike() {
+        if (videoId <= 0 || !streamUrl.isEmpty()) {
+            flashTip("正文视频不参与喜欢", 1200);
+            return;
+        }
+        if (!Auth.loggedIn()) {
+            AuthDialog.show(this, false, () -> {
+            });
+            return;
+        }
+        final boolean target = !liked;
+        // 本地先落，云端失败再回滚
+        Store.get(this).toggleLike("videolike:" + videoId, ep);
+        liked = target;
+        syncLikeBtn();
+        Api.likeVideo(videoId, ep, target, new Api.Cb<org.json.JSONObject>() {
+            @Override
+            public void ok(org.json.JSONObject data) {
+                boolean now = data.optBoolean("liked", target);
+                if (now != liked) {
+                    liked = now;
+                    syncLikeBtn();
+                }
+                int total = data.optInt("likes", 0);
+                flashTip(now ? ("已喜欢" + (total > 0 ? " · 全剧 " + total : "")) : "已取消喜欢", 1200);
             }
-            downloading = true;
-            btn.setText("0%");
-            String series = dramaTitle == null || dramaTitle.isEmpty()
-                    ? "未知剧集" : dramaTitle;
-            String fileName = streamUrl.isEmpty()
-                    ? MediaSave.sanitize(series) + "_EP" + String.format("%02d", ep) + ".ts"
-                    : MediaSave.sanitize(series) + ".ts";
-            HlsDownloader.download(this, currentUrl, series, fileName,
-                    new HlsDownloader.Cb() {
-                        @Override
-                        public void onProgress(int done, int total, String note) {
-                            ui.post(() -> {
-                                int pct = total > 0 ? done * 100 / total : 0;
-                                btn.setText(pct + "%");
-                            });
-                        }
 
-                        @Override
-                        public void onDone(String path) {
-                            ui.post(() -> {
-                                downloading = false;
-                                btn.setText("已存 ✓");
-                                flashTip("已保存到 " + path, 2200);
-                                ui.postDelayed(() -> btn.setText("下载"), 3500);
-                            });
-                        }
-
-                        @Override
-                        public void onErr(String msg) {
-                            ui.post(() -> {
-                                downloading = false;
-                                btn.setText("下载");
-                                flashTip("下载失败：" + msg, 2000);
-                            });
-                        }
-                    });
+            @Override
+            public void err(String msg) {
+                liked = !target;
+                Store.get(PlayerActivity.this).toggleLike("videolike:" + videoId, ep);
+                syncLikeBtn();
+                flashTip("喜欢没同步成功：" + msg, 1600);
+            }
         });
-        toolRow.addView(btn, chipLp(8));
     }
 
     /** 工具条最右格横屏按钮：点一次切横屏，再点回竖屏（manifest 已配 configChanges，不重建 Activity） */
     private void buildOrientButton(LinearLayout toolRow) {
-        // 文字胶囊，和「1.0x / 选集 / 画面」完全同一套样式与 8dp 间距，
-        // 原来是个 32dp 方形图标按钮，比其它 chip 矮一截、间距也对不齐
-        TextView btn = toolChip("横屏");
-        btn.setOnClickListener(v -> toggleOrientation());
-        toolRow.addView(btn, chipLp(8));
-        orientBtn = btn;
+        // 图标按钮：原来的「横屏」两字在横屏铺满时被挤成上下两行，改成固定 36dp 宽的展开图标
+        orientBtn = new FrameLayout(this);
+        orientBtn.setBackground(Ui.stroke(Ui.chipFill(), Ui.chipStroke(), Ui.dp(this, 14), 1));
+        orientBtn.setClickable(true);
+        orientIcon = new android.widget.ImageView(this);
+        orientIcon.setImageResource(R.drawable.ic_expand);
+        orientIcon.setColorFilter(Ui.C_TEXT);
+        orientBtn.addView(orientIcon, new FrameLayout.LayoutParams(
+                Ui.dp(this, 16), Ui.dp(this, 16), Gravity.CENTER));
+        orientBtn.setOnClickListener(v -> toggleOrientation());
+        LinearLayout.LayoutParams lp = chipLp(8);
+        lp.width = Ui.dp(this, 36);
+        lp.height = Ui.dp(this, 29);
+        toolRow.addView(orientBtn, lp);
         syncOrientIcon();
     }
 
@@ -725,8 +799,8 @@ public class PlayerActivity extends AppCompatActivity {
     }
 
     private void syncOrientIcon() {
-        // 文字按钮不再需要旋转图标，保持「横屏」字样
-        if (orientBtn != null) orientBtn.setText("横屏");
+        // 只有图标，横竖屏共用：点一次切横屏，再点回竖屏
+        if (orientIcon != null) orientIcon.setColorFilter(Ui.C_TEXT);
     }
 
     @Override
@@ -1213,10 +1287,28 @@ public class PlayerActivity extends AppCompatActivity {
             startStream(streamUrl);
             return;
         }
+        // 已下载过的集：直接播本地文件（离线也能看，联网时也省流量）
+        String localUri = Store.get(this).localFile(videoId, targetEp);
+        // 播之前先探活：文件被外部删了就别再指着它，改在线播并提示
+        if (localUri != null && !localUri.isEmpty()
+                && !Store.get(this).isFileAlive(localUri)) {
+            Store.get(this).clearLocalFile(videoId, targetEp);
+            localUri = null;
+            flashTip("缓存文件已丢失，改为在线播放", 1800);
+        }
+        if (localUri != null && !localUri.isEmpty()) {
+            statusTip.setVisibility(View.GONE);
+            startLocal(localUri);
+            epLabel.setText("第 " + targetEp + " 集 · 本地");
+            flashTip("正在播放已缓存的第 " + targetEp + " 集", 1400);
+            watchLocalPlayback(targetEp);
+            return;
+        }
         Api.playback(videoId, targetEp, new Api.Cb<String>() {
             @Override
             public void ok(String url) {
                 currentUrl = url;
+                playingLocal = false;
                 durationMs = 0;
                 player.setMediaItem(MediaItem.fromUri(url));
                 player.setPlaybackSpeed(boostLocked ? boostSpeed : speed);
@@ -1227,6 +1319,20 @@ public class PlayerActivity extends AppCompatActivity {
 
             @Override
             public void err(String msg) {
+                // 网络挂了再兜一次本地文件（比如表里没记、但文件确实在）
+                String fallback = Store.get(PlayerActivity.this).localFile(videoId, targetEp);
+                if (fallback == null || fallback.isEmpty()) {
+                    fallback = MediaSave.findDownloaded(PlayerActivity.this,
+                            dramaTitle == null ? "" : dramaTitle, "第" + targetEp + "集.mp4");
+                }
+                if (fallback != null && !fallback.isEmpty()) {
+                    Store.get(PlayerActivity.this).saveLocalFile(videoId, targetEp, fallback);
+                    statusTip.setVisibility(View.GONE);
+                    startLocal(fallback);
+                    epLabel.setText("第 " + targetEp + " 集 · 本地");
+                    flashTip("离线播放：第 " + targetEp + " 集（本地缓存）", 1600);
+                    return;
+                }
                 statusTip.setVisibility(View.VISIBLE);
                 statusTip.setText("地址获取失败：" + msg + "\n点击重试");
                 statusTip.setOnClickListener(v -> prepare());
@@ -1234,8 +1340,49 @@ public class PlayerActivity extends AppCompatActivity {
         });
     }
 
+    /**
+     * 本地缓存播放守护：合并出来的 mp4 偶尔没有可用的索引（moov/关键帧），
+     * ExoPlayer 既不报错、画面也不动，表现就是一片黑。
+     * 4 秒还没走出去就放弃本地文件：清掉记录、改在线播放，用户看到的是自动切源。
+     */
+    private void watchLocalPlayback(final int targetEp) {
+        ui.postDelayed(() -> {
+            if (!playingLocal || player == null) return;
+            if (ep != targetEp) return;
+            if (player.getPlaybackState() == androidx.media3.common.Player.STATE_ENDED) return;
+            if (player.getCurrentPosition() >= 400) return;
+            playingLocal = false;
+            player.stop();
+            Store.get(this).clearLocalFile(videoId, targetEp);
+            statusTip.setVisibility(View.VISIBLE);
+            statusTip.setText("本地缓存无法播放，正在改为在线播放…");
+            statusTip.setOnClickListener(null);
+            prepare();
+        }, 4200L);
+    }
+
+    /** 播本地文件（content:// 或绝对路径）：绕过边播边缓存，直接交给 Extractor */
+    private void startLocal(String uri) {
+        currentUrl = uri;
+        playingLocal = true;
+        durationMs = 0;
+        try {
+            androidx.media3.exoplayer.source.MediaSource ms =
+                    new androidx.media3.exoplayer.source.ProgressiveMediaSource.Factory(
+                            new androidx.media3.datasource.DefaultDataSource.Factory(this))
+                            .createMediaSource(MediaItem.fromUri(uri));
+            player.setMediaSource(ms);
+        } catch (Throwable t) {
+            player.setMediaItem(MediaItem.fromUri(uri));
+        }
+        player.setPlaybackSpeed(boostLocked ? boostSpeed : speed);
+        player.prepare();
+        player.setPlayWhenReady(true);
+    }
+
     private void startStream(String url) {
         currentUrl = url;
+        playingLocal = false;
         durationMs = 0;
         player.setMediaItem(MediaItem.fromUri(url));
         player.setPlaybackSpeed(boostLocked ? boostSpeed : speed);
@@ -1246,11 +1393,22 @@ public class PlayerActivity extends AppCompatActivity {
     private void switchTo(int target) {
         if (!streamUrl.isEmpty()) return;
         saveHistory();
+        // 上一集的地址留给 evictPrevious 用，切过去后删掉它的缓存
+        final String prevUrl = currentUrl;
+        if (nextLoader != null) {
+            nextLoader.release();
+            nextLoader = null;
+            nextPreppedUrl = "";
+        }
         ep = target;
         startMs = 0;
         epLabel.setText("第 " + ep + " 集");
         buildEpisodeGrid();
+        liked = Store.get(this).isLiked("videolike:" + videoId, ep);
+        syncLikeBtn();
         prepare();
+        // 新的一集开始播 = 上一集的缓存可以删了
+        ui.postDelayed(() -> evictPrevious(prevUrl), 1200L);
     }
 
     /** 上一集/下一集图标按钮（32dp，与全屏键同规格） */
@@ -1390,6 +1548,94 @@ public class PlayerActivity extends AppCompatActivity {
         }
     }
 
+    // ------------------------------------------------------------------ 预缓存
+
+    /**
+     * 磁盘缓存目录：app 私有，卸载即清；上限 300MB，超出按 LRU 淘汰。
+     * SimpleCache 带文件锁，同一进程只能有一个实例 —— 做成静态单例，Activity 重建不重复建。
+     */
+    private SimpleCache buildMediaCache() {
+        synchronized (PlayerActivity.class) {
+            if (sMediaCache != null) return sMediaCache;
+            try {
+                java.io.File dir = new java.io.File(getCacheDir(), "media_cache");
+                if (!dir.exists()) dir.mkdirs();
+                sMediaCache = new SimpleCache(dir,
+                        new androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor(
+                                300L * 1024 * 1024),
+                        new StandaloneDatabaseProvider(this));
+            } catch (Throwable t) {
+                sMediaCache = null;
+            }
+            return sMediaCache;
+        }
+    }
+
+    /** 下一集的 URL（按当前选集表顺推；没有下一集返回空） */
+    private int nextEpNumber() {
+        if (streamUrl.isEmpty() || videoId <= 0) return 0;
+        if (episodes.isEmpty()) return ep + 1;
+        for (int i = 0; i < episodes.size(); i++) {
+            if (episodes.get(i).ep == ep) {
+                return i + 1 < episodes.size() ? episodes.get(i + 1).ep : 0;
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * 静默预载下一集：单独的 ExoPlayer 只 prepare 不播，写入同一个 SimpleCache。
+     * 不做 seek、不绑视图，开销只有后台网络 + 解码探测。
+     */
+    private void preloadNext() {
+        final int nextEp = nextEpNumber();
+        if (nextEp <= 0 || cacheFactory == null) return;
+        if (downloading) return;
+        Api.playback(videoId, nextEp, new Api.Cb<String>() {
+            @Override
+            public void ok(String url) {
+                if (url == null || url.isEmpty() || url.equals(nextPreppedUrl)) return;
+                nextPreppedUrl = url;
+                try {
+                    if (nextLoader != null) {
+                        nextLoader.release();
+                        nextLoader = null;
+                    }
+                    androidx.media3.exoplayer.DefaultLoadControl lc =
+                            new androidx.media3.exoplayer.DefaultLoadControl.Builder()
+                                    .setBufferDurationsMs(60000, 120000, 2000, 4000)
+                                    .build();
+                    nextLoader = new ExoPlayer.Builder(PlayerActivity.this)
+                            .setLoadControl(lc)
+                            .setMediaSourceFactory(new DefaultMediaSourceFactory(cacheFactory))
+                            .build();
+                    nextLoader.setMediaItem(MediaItem.fromUri(url));
+                    nextLoader.prepare();
+                } catch (Throwable ignored) {
+                }
+            }
+
+            @Override
+            public void err(String msg) {
+            }
+        });
+    }
+
+    /** 切集后清上一集缓存（需求：看完下一集就删上一集，控制占用） */
+    private void evictPrevious(String prevUrl) {
+        if (prevUrl == null || prevUrl.isEmpty() || mediaCache == null) return;
+        try {
+            // 缓存 key 直接用 URL（CacheDataSource 的默认口径）
+            String cacheKey = prevUrl;
+            java.util.Set<androidx.media3.datasource.cache.CacheSpan> spans =
+                    mediaCache.getCachedSpans(cacheKey);
+            for (androidx.media3.datasource.cache.CacheSpan sp : spans) {
+                mediaCache.removeSpan(sp);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
     private void startTicker() {
         ui.post(new Runnable() {
             @Override
@@ -1404,6 +1650,10 @@ public class PlayerActivity extends AppCompatActivity {
                     }
                     long buf = player.getBufferedPercentage();
                     seek.setSecondaryProgress((int) (buf * 10));
+                    // 剩余不到 90 秒：静默预载下一集开头，切过去不用等
+                    if (durationMs > 0 && durationMs - pos < 90_000L && player.isPlaying()) {
+                        preloadNext();
+                    }
                     if (++tick % 6 == 0 && player.isPlaying()) saveHistory();
                 }
                 ui.postDelayed(this, 500);
@@ -1419,6 +1669,8 @@ public class PlayerActivity extends AppCompatActivity {
         if (dur <= 0) return;
         if (pos < 3000) return;
         Store.get(this).recordHistory(videoId, dramaTitle, cover, ep, pos, dur, epCount);
+        // 登录态顺手把进度写进账号：POST /api/users/me/history
+        Api.pushHistory(videoId, ep, epCount);
     }
 
     @Override
@@ -1449,6 +1701,11 @@ public class PlayerActivity extends AppCompatActivity {
             player.release();
             player = null;
         }
+        if (nextLoader != null) {
+            nextLoader.release();
+            nextLoader = null;
+        }
+        // mediaCache 是进程级单例（带文件锁），这里不释放，避免重建时抢不到锁
         super.onDestroy();
     }
 }

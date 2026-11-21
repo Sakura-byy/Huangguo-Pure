@@ -286,6 +286,10 @@ public class RankPage extends FrameLayout implements PullRefresh.Refreshable {
             AspectImageView cover = new AspectImageView(c);
             cover.setRatio(1.34f);
             cover.setLayoutParams(Ui.lp(Ui.dp(c, 62), Ui.dp(c, 83)));
+            // 圆角遮罩：用 GradientDrawable 当 outline，clipToOutline 直接把封面裁成圆角
+            cover.setClipToOutline(true);
+            cover.setBackground(Ui.round(Ui.darkGlass ? 0x1FFFFFFF : 0x14000000,
+                    Ui.dp(c, 12)));
             mid.addView(cover);
 
             LinearLayout texts = Ui.col(c);

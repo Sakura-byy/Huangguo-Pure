@@ -7,6 +7,7 @@ import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.View;
 import android.widget.Toast;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -217,11 +218,8 @@ public final class Update {
 
         final FrameLayout[] ref = new FrameLayout[1];
         col.addView(GlassPanel.buttons(act, ref,
-                new String[]{"稍后", r.apkUrl.isEmpty() ? "前往下载" : "立即更新"},
-                new Runnable[]{null, () -> {
-                    String url = r.apkUrl.isEmpty() ? r.pageUrl : r.apkUrl;
-                    open(act, url);
-                }}));
+                new String[]{"稍后", "立即更新"},
+                new Runnable[]{null, () -> downloadAndInstall(act, r)}));
 
         ref[0] = GlassPanel.show(act, col, true);
     }
@@ -315,6 +313,112 @@ public final class Update {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    // ------------------------------------------------------------------ 应用内更新
+
+    /**
+     * 直接下 GitHub release 里的 apk 并调起系统安装器。
+     *
+     * 不跳浏览器：玻璃进度条显示百分比，下完用 FileProvider 交给 PackageInstaller。
+     * 没有「安装未知应用」权限时先带用户去开。
+     */
+    public static void downloadAndInstall(final Activity act, final Release r) {
+        if (act == null || r == null) return;
+        if (r.apkUrl == null || r.apkUrl.isEmpty()) {
+            Toast.makeText(act, "这个版本没有上传安装包", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
+                && !act.getPackageManager().canRequestPackageInstalls()) {
+            try {
+                act.startActivity(new Intent(
+                        android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + act.getPackageName())));
+                Toast.makeText(act, "允许安装未知应用后，再点一次立即更新", Toast.LENGTH_LONG).show();
+            } catch (Exception e) {
+                Toast.makeText(act, "无法打开安装权限设置", Toast.LENGTH_SHORT).show();
+            }
+            return;
+        }
+
+        final LinearLayout col = Ui.col(act);
+        col.addView(Ui.bold(act, "正在下载更新", 15f, Ui.C_TEXT));
+        final TextView tip = Ui.text(act, "v" + r.version + " · 准备中…", 11.5f, Ui.C_SUB);
+        LinearLayout.LayoutParams tp = Ui.lp(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        tp.topMargin = Ui.dp(act, 8);
+        col.addView(tip, tp);
+
+        final android.widget.ProgressBar bar = new android.widget.ProgressBar(act, null,
+                android.R.attr.progressBarStyleHorizontal);
+        bar.setMax(100);
+        LinearLayout.LayoutParams bp = Ui.lp(LinearLayout.LayoutParams.MATCH_PARENT,
+                Ui.dp(act, 8));
+        bp.topMargin = Ui.dp(act, 12);
+        col.addView(bar, bp);
+
+        final FrameLayout[] ref = new FrameLayout[1];
+        ref[0] = GlassPanel.show(act, col, false);
+
+        new Thread(() -> {
+            java.io.File dir = new java.io.File(act.getCacheDir(), "apk");
+            if (!dir.exists()) dir.mkdirs();
+            final java.io.File out = new java.io.File(dir, "update-" + r.version + ".apk");
+            try {
+                Request req = new Request.Builder().url(r.apkUrl)
+                        .header("User-Agent", Api.UA).build();
+                Response resp = Api.CLIENT.newCall(req).execute();
+                if (!resp.isSuccessful() || resp.body() == null) {
+                    throw new java.io.IOException("HTTP " + resp.code());
+                }
+                long total = resp.body().contentLength();
+                try (java.io.InputStream in = resp.body().byteStream();
+                     java.io.FileOutputStream fos = new java.io.FileOutputStream(out)) {
+                    byte[] buf = new byte[64 * 1024];
+                    long done = 0;
+                    int n;
+                    while ((n = in.read(buf)) > 0) {
+                        fos.write(buf, 0, n);
+                        done += n;
+                        final int pct = total > 0 ? (int) (done * 100 / total) : -1;
+                        final String size = Ui.fmtSize(done)
+                                + (total > 0 ? " / " + Ui.fmtSize(total) : "");
+                        MAIN.post(() -> {
+                            if (pct >= 0) bar.setProgress(pct);
+                            tip.setText("v" + r.version + " · " + size
+                                    + (pct >= 0 ? "  " + pct + "%" : ""));
+                        });
+                    }
+                } finally {
+                    resp.close();
+                }
+                MAIN.post(() -> {
+                    try {
+                        if (ref[0] != null) ref[0].setVisibility(View.GONE);
+                        installApk(act, out);
+                    } catch (Exception e) {
+                        Toast.makeText(act, "安装包启动失败：" + e.getMessage(),
+                                Toast.LENGTH_LONG).show();
+                    }
+                });
+            } catch (final Exception e) {
+                MAIN.post(() -> {
+                    if (ref[0] != null) ref[0].setVisibility(View.GONE);
+                    Toast.makeText(act, "下载失败：" + e.getMessage(), Toast.LENGTH_LONG).show();
+                });
+            }
+        }, "apk-dl").start();
+    }
+
+    /** FileProvider 授权后交给系统安装器 */
+    private static void installApk(Activity act, java.io.File apk) {
+        Uri uri = androidx.core.content.FileProvider.getUriForFile(act,
+                act.getPackageName() + ".fileprovider", apk);
+        Intent i = new Intent(Intent.ACTION_VIEW);
+        i.setDataAndType(uri, "application/vnd.android.package-archive");
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        act.startActivity(i);
     }
 
     private static void open(Context c, String url) {

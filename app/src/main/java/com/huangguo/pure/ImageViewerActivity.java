@@ -331,8 +331,7 @@ public class ImageViewerActivity extends AppCompatActivity {
         super.onConfigurationChanged(newConfig);
         boolean dark = Theme.isDark(this);
         if (Theme.mode() == Theme.AUTO && dark != Ui.darkGlass) {
-            Ui.applyPalette(dark);
-            recreate();
+            Ui.retheme(this);
         }
     }
 
@@ -341,8 +340,7 @@ public class ImageViewerActivity extends AppCompatActivity {
         super.onResume();
         // 兜底：配置变化发生在后台时，回到前台再补一次
         if (Ui.darkGlass != Theme.isDark(this)) {
-            Ui.applyPalette(Theme.isDark(this));
-            recreate();
+            Ui.retheme(this);
         }
     }
 }

@@ -150,6 +150,9 @@ public final class AuthDialog {
                     submit.setEnabled(true);
                     Auth.save(data);
                     Toast.makeText(ctx, "登录成功", Toast.LENGTH_SHORT).show();
+                    // 登录后立刻把本地收藏与历史同步到账号（失败静默，本地不动）
+                    Sync.markDirty();
+                    Sync.pushIfDirty(ctx);
                     d.dismiss();
                     if (done != null) done.onDone();
                 }

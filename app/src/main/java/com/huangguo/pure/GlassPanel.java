@@ -74,6 +74,29 @@ public final class GlassPanel {
     }
 
     /** 卡片底部按钮：右对齐，最后一个为强调色主按钮 */
+    /**
+     * 二次确认弹窗：删收藏 / 删缓存 / 删历史都必须过这一层。
+     * 标题 + 一句说明 + 「取消 / 确认」两个玻璃按钮。
+     */
+    public static void confirm(android.app.Activity act, String title, String message,
+                               String okLabel, final Runnable onOk) {
+        if (act == null || act.isFinishing()) return;
+        LinearLayout col = Ui.col(act);
+        col.addView(Ui.bold(act, title, 15f, Ui.C_TEXT));
+
+        TextView msg = Ui.text(act, message, 12f, Ui.C_SUB);
+        msg.setLineSpacing(Ui.dp(act, 3), 1f);
+        LinearLayout.LayoutParams mp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        mp.topMargin = Ui.dp(act, 10);
+        col.addView(msg, mp);
+
+        final FrameLayout[] ref = new FrameLayout[1];
+        col.addView(buttons(act, ref, new String[]{"取消", okLabel},
+                new Runnable[]{null, onOk}));
+        ref[0] = show(act, col, true);
+    }
+
     public static LinearLayout buttons(Context c, final FrameLayout[] overlayRef,
                                        String[] labels, Runnable[] actions) {
         LinearLayout row = Ui.row(c);

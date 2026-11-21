@@ -17,6 +17,8 @@ public class PosterCard extends FrameLayout {
     public final TextView title;
     public final TextView meta;
     public final TextView badge;
+    /** 卡片底部的标签类型文字（异界 奇幻 穿越 / 游戏 恐怖 …），与海报底色拉开对比 */
+    public final TextView tagLine;
 
     public PosterCard(Context c, int radiusDp) {
         super(c);
@@ -39,10 +41,11 @@ public class PosterCard extends FrameLayout {
         sp.gravity = Gravity.BOTTOM;
         addView(scrim, sp);
 
-        badge = Ui.bold(c, "", 10f, Ui.C_AMBER);
+        // 评分角标：底色压成不透明深色遮罩（原来只有 35% 琥珀，压在亮海报上完全看不清）
+        badge = Ui.bold(c, "", 10f, Ui.C_GOLD);
         badge.setGravity(Gravity.CENTER);
         badge.setPadding(Ui.dp(c, 7), Ui.dp(c, 3), Ui.dp(c, 7), Ui.dp(c, 3));
-        badge.setBackground(Ui.stroke(0x9905070C, 0x59F5B942, Ui.dp(c, 9), 1));
+        badge.setBackground(Ui.stroke(0xC905070C, 0x59F5B942, Ui.dp(c, 9), 1));
         LayoutParams bp = new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
         bp.gravity = Gravity.TOP | Gravity.END;
         bp.topMargin = Ui.dp(c, 8);
@@ -68,6 +71,16 @@ public class PosterCard extends FrameLayout {
         LinearLayout.LayoutParams mp = Ui.lp(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
         mp.topMargin = Ui.dp(c, 3);
         info.addView(meta, mp);
+
+        // 标签类型：压在底部 scrim 上，恒用浅灰白（不随主题变，海报底是深色）
+        tagLine = Ui.text(c, "", 10f, 0xFFAEB9C9);
+        tagLine.setMaxLines(1);
+        tagLine.setEllipsize(TextUtils.TruncateAt.END);
+        tagLine.setIncludeFontPadding(false);
+        LinearLayout.LayoutParams tgp = Ui.lp(LayoutParams.MATCH_PARENT,
+                LayoutParams.WRAP_CONTENT);
+        tgp.topMargin = Ui.dp(c, 3);
+        info.addView(tagLine, tgp);
     }
 
     public void bind(Models.Video v) {
@@ -75,11 +88,17 @@ public class PosterCard extends FrameLayout {
         title.setText(v.title);
         StringBuilder sb = new StringBuilder();
         // 评分只在右上角 badge 显示，这里不再重复（去掉左下角第二个评分）
-        if (v.epCount > 0) {
-            sb.append(v.epText());
-        }
-        if (sb.length() == 0 && v.tags != null && !v.tags.isEmpty()) sb.append(v.tags);
+        if (v.epCount > 0) sb.append(v.epText());
         meta.setText(sb.toString());
+
+        // 标签类型文字：紧贴标题下方一行（异界 奇幻 穿越 …），没有标签就不占位
+        String tags = v.tags == null ? "" : v.tags.trim();
+        if (!tags.isEmpty()) {
+            tagLine.setVisibility(VISIBLE);
+            tagLine.setText(tags.replace(",", "  ").replace("、", "  "));
+        } else {
+            tagLine.setVisibility(GONE);
+        }
         if (v.score > 0) {
             badge.setVisibility(VISIBLE);
             badge.setText(v.scoreText());

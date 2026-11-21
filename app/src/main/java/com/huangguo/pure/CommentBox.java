@@ -8,6 +8,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -29,6 +30,12 @@ public class CommentBox extends LinearLayout {
 
         /** 发表一条评论 */
         void send(String text, Api.Cb<String> cb);
+
+        /** 拉某条评论的二级回复（点「回复 N」展开时调用） */
+        void replies(long commentId, int page, Api.Cb<List<Models.Comment>> cb);
+
+        /** 回复某条评论（点评论行触发，带着父楼 id） */
+        void reply(long parentId, String text, Api.Cb<String> cb);
     }
 
     private static final int MAX_LEN = 200;
@@ -42,8 +49,13 @@ public class CommentBox extends LinearLayout {
     private final TextView sendBtn;
     private final TextView more;
     private final TextView tip;
+    private TextView replyLabel;
 
     private int page = 1;
+    /** 当前回复目标（0 = 发新评论）；点任意评论行设置它 */
+    private long replyTo;
+    private String replyName = "";
+    private LinearLayout replyTipBar;
     private boolean busy;
     private int total;
     private boolean loadedOnce;
@@ -102,6 +114,25 @@ public class CommentBox extends LinearLayout {
         inputRow.addView(sendBtn, slp);
         sendBtn.setOnClickListener(v -> submit());
 
+        // 回复态提示条：点评论后出现，右侧 × 取消
+        replyTipBar = Ui.row(c);
+        replyTipBar.setVisibility(GONE);
+        LinearLayout.LayoutParams rtp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        rtp.topMargin = Ui.dp(c, 6);
+        addView(replyTipBar, rtp);
+
+        replyLabel = Ui.text(c, "", 10.5f, Ui.accentBright());
+        LinearLayout.LayoutParams rllp = Ui.lp(0, ViewGroup.LayoutParams.WRAP_CONTENT);
+        rllp.weight = 1f;
+        replyTipBar.addView(replyLabel, rllp);
+
+        TextView cancelReply = Ui.text(c, "取消", 10.5f, Ui.C_DIM);
+        cancelReply.setPadding(Ui.dp(c, 8), Ui.dp(c, 2), Ui.dp(c, 4), Ui.dp(c, 2));
+        cancelReply.setClickable(true);
+        cancelReply.setOnClickListener(v -> clearReply());
+        replyTipBar.addView(cancelReply);
+
         list = Ui.col(c);
         LinearLayout.LayoutParams llp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -150,7 +181,7 @@ public class CommentBox extends LinearLayout {
                         return;
                     }
                 }
-                for (Models.Comment cm : items) list.addView(row(cm, likeKind));
+                for (Models.Comment cm : items) list.addView(row(cm));
                 total = Math.max(total, list.getChildCount());
                 head.setText(headText());
                 more.setVisibility(items.size() >= 20 ? VISIBLE : GONE);
@@ -183,13 +214,16 @@ public class CommentBox extends LinearLayout {
             return;
         }
         sendBtn.setEnabled(false);
-        source.send(text, new Api.Cb<String>() {
+        final long targetId = replyTo;
+        Api.Cb<String> cb = new Api.Cb<String>() {
             @Override
             public void ok(String msg) {
                 sendBtn.setEnabled(true);
                 input.setText("");
                 hideIme();
-                Toast.makeText(getContext(), msg == null ? "已提交" : msg, Toast.LENGTH_SHORT).show();
+                clearReply();
+                Toast.makeText(getContext(), msg == null ? "已提交" : msg,
+                        Toast.LENGTH_SHORT).show();
                 reload();
             }
 
@@ -198,7 +232,85 @@ public class CommentBox extends LinearLayout {
                 sendBtn.setEnabled(true);
                 Toast.makeText(getContext(), "发表失败：" + msg, Toast.LENGTH_SHORT).show();
             }
-        });
+        };
+        // 回复态挂到父楼下（reply_id），否则发新楼
+        if (targetId > 0) source.reply(targetId, text, cb);
+        else source.send(text, cb);
+    }
+
+    /** 点评论：设为目标楼，输入框聚焦并滚到可视区上方（键盘弹出后仍看得见） */
+    private void startReply(Models.Comment cm) {
+        if (cm == null || cm.id <= 0) return;
+        replyTo = cm.id;
+        replyName = cm.nickname;
+        replyLabel.setText("正在回复 @" + cm.nickname);
+        replyTipBar.setVisibility(VISIBLE);
+        input.setHint("回复 @" + cm.nickname + "…");
+        input.requestFocus();
+        scrollComposerToUpperHalf(0);
+        input.postDelayed(() -> {
+            try {
+                InputMethodManager im = (InputMethodManager)
+                        getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+                if (im != null) im.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+            } catch (Exception ignored) {
+            }
+            // 键盘起来后可视高度变了，再校正一次位置
+            scrollComposerToUpperHalf(380);
+        }, 120L);
+    }
+
+    /** 已给内容垫过多少底部空间（只垫一次） */
+    private int paddedBottom;
+
+    /**
+     * 把输入框滚到可视区上方 22% 处。
+     *
+     * 不用 scrollTo 算绝对目标（键盘弹出后可视高度会变，容易算过头把输入框顶出屏幕），
+     * 直接量「输入框离目标线多少」再 scrollBy，重复调用也自洽。
+     */
+    private void scrollComposerToUpperHalf(long delay) {
+        final android.widget.ScrollView sv = findScrollHost();
+        if (sv == null) return;
+        final View content = sv.getChildAt(0);
+        if (content != null && paddedBottom == 0) {
+            paddedBottom = Math.max(Ui.dp(getContext(), 220), sv.getHeight() / 2);
+            content.setPadding(content.getPaddingLeft(), content.getPaddingTop(),
+                    content.getPaddingRight(), content.getPaddingBottom() + paddedBottom);
+        }
+        Runnable task = () -> {
+            int[] self = new int[2];
+            int[] host = new int[2];
+            getLocationOnScreen(self);
+            sv.getLocationOnScreen(host);
+            int inputY = self[1] + Ui.dp(getContext(), 30);
+            int desired = host[1] + (int) (sv.getHeight() * 0.22f);
+            int delta = inputY - desired;
+            if (Math.abs(delta) > Ui.dp(getContext(), 6)) sv.smoothScrollBy(0, delta);
+        };
+        if (delay <= 0) sv.post(task);
+        else sv.postDelayed(task, delay);
+    }
+
+
+    private android.widget.ScrollView findScrollHost() {
+        View v = this;
+        while (v.getParent() instanceof View) {
+            View parent = (View) v.getParent();
+            if (parent instanceof android.widget.ScrollView) {
+                return (android.widget.ScrollView) parent;
+            }
+            v = parent;
+        }
+        return null;
+    }
+
+    /** 退出回复态 */
+    private void clearReply() {
+        replyTo = 0;
+        replyName = "";
+        replyTipBar.setVisibility(GONE);
+        input.setHint("说点什么…");
     }
 
     private void hideIme() {
@@ -213,12 +325,17 @@ public class CommentBox extends LinearLayout {
 
     // ------------------------------------------------------------------ 行
 
-    static View row(Context c, Models.Comment cm, String likeKind) {
+    /**
+     * 一条评论：头像 + 内容（可展开二级回复）+ 最右侧点赞列。
+     * 点赞列固定 46dp、右缘与输入框「发表」按钮对齐，字号比原来大一档。
+     */
+    private View row(Models.Comment cm) {
+        Context c = getContext();
         LinearLayout row = Ui.row(c);
         row.setGravity(Gravity.TOP);
         LinearLayout.LayoutParams rlp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
-        rlp.topMargin = Ui.dp(c, 10);
+        rlp.topMargin = Ui.dp(c, 12);
         row.setLayoutParams(rlp);
 
         TextView avatar = Ui.bold(c, firstChar(cm.nickname), 11f, Ui.onAmber());
@@ -253,52 +370,129 @@ public class CommentBox extends LinearLayout {
         tlp.topMargin = Ui.dp(c, 3);
         col.addView(text, tlp);
 
-        // 点赞 + 回复数：点赞可点（本地点亮，♥ 变琥珀色）
-        LinearLayout footRow = Ui.row(c);
-        LinearLayout.LayoutParams flp = Ui.lp(ViewGroup.LayoutParams.WRAP_CONTENT,
+        // 二级回复容器（默认隐藏，点「回复 N」展开）
+        LinearLayout replyBox = Ui.col(c);
+        replyBox.setVisibility(GONE);
+        LinearLayout.LayoutParams rbp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
-        flp.topMargin = Ui.dp(c, 4);
-        col.addView(footRow, flp);
+        rbp.topMargin = Ui.dp(c, 6);
+        col.addView(replyBox, rbp);
 
+        if (cm.replyCount > 0) {
+            final TextView more = Ui.text(c, "展开 " + Ui.shortNum(cm.replyCount) + " 条回复",
+                    11f, Ui.accentBright());
+            more.setPadding(0, Ui.dp(c, 4), Ui.dp(c, 8), Ui.dp(c, 4));
+            more.setClickable(true);
+            final boolean[] open = {false};
+            final boolean[] loading = {false};
+            more.setOnClickListener(v -> {
+                if (open[0]) {
+                    open[0] = false;
+                    replyBox.setVisibility(GONE);
+                    more.setText("展开 " + Ui.shortNum(cm.replyCount) + " 条回复");
+                    return;
+                }
+                open[0] = true;
+                replyBox.setVisibility(VISIBLE);
+                more.setText("收起回复");
+                if (loading[0] || replyBox.getChildCount() > 0) return;
+                loading[0] = true;
+                final TextView tipRow = Ui.text(c, "加载回复中…", 10.5f, Ui.C_DIM);
+                replyBox.addView(tipRow);
+                source.replies(cm.id, 1, new Api.Cb<List<Models.Comment>>() {
+                    @Override
+                    public void ok(List<Models.Comment> items) {
+                        replyBox.removeView(tipRow);
+                        loading[0] = false;
+                        if (items.isEmpty()) {
+                            replyBox.addView(Ui.text(c, "还没有回复", 10.5f, Ui.C_DIM));
+                            return;
+                        }
+                        for (Models.Comment r : items) replyBox.addView(replyRow(r));
+                    }
+
+                    @Override
+                    public void err(String msg) {
+                        replyBox.removeView(tipRow);
+                        loading[0] = false;
+                        replyBox.addView(Ui.text(c, "回复加载失败：" + msg, 10.5f, Ui.C_DIM));
+                    }
+                });
+            });
+            col.addView(more);
+        }
+
+        // 整行可点：点一下就把这条评论设成回复目标（输入框聚焦 + 弹出键盘）
+        row.setClickable(true);
+        row.setOnClickListener(v -> startReply(cm));
+
+        // 右侧点赞列：与「发表」按钮同一列（右缘对齐），字号大一档
+        TextView like = Ui.text(c, likeText(c, cm, isLikedCm(cm)), 12.5f,
+                isLikedCm(cm) ? Ui.C_AMBER : Ui.C_DIM);
+        like.setGravity(Gravity.CENTER);
         if (likeKind != null && cm.id > 0) {
-            boolean liked = Store.get(c).isLiked(likeKind, cm.id);
-            TextView like = Ui.text(c, likeText(c, cm, liked), 10.5f,
-                    liked ? Ui.C_AMBER : Ui.C_DIM);
             like.setClickable(true);
-            like.setPadding(Ui.dp(c, 8), Ui.dp(c, 2), Ui.dp(c, 8), Ui.dp(c, 2));
             like.setOnClickListener(v -> {
                 boolean now = Store.get(c).toggleLike(likeKind, cm.id);
                 like.setText(likeText(c, cm, now));
                 like.setTextColor(now ? Ui.C_AMBER : Ui.C_DIM);
                 like.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY);
             });
-            footRow.addView(like);
         }
+        LinearLayout.LayoutParams lkp = Ui.lp(Ui.dp(c, 46), ViewGroup.LayoutParams.WRAP_CONTENT);
+        lkp.leftMargin = Ui.dp(c, 6);
+        row.addView(like, lkp);
+        return row;
+    }
 
-        if (cm.likeCount > 0 && likeKind == null) {
-            TextView like = Ui.text(c, "♥ " + Ui.shortNum(cm.likeCount), 10f, Ui.C_DIM);
-            like.setPadding(0, Ui.dp(c, 2), Ui.dp(c, 8), Ui.dp(c, 2));
-            footRow.addView(like);
+    private boolean isLikedCm(Models.Comment cm) {
+        return likeKind != null && cm.id > 0 && Store.get(getContext()).isLiked(likeKind, cm.id);
+    }
+
+    /** 二级回复：缩进一条，头像更小，不带点赞列 */
+    private View replyRow(Models.Comment r) {
+        Context c = getContext();
+        LinearLayout row = Ui.row(c);
+        row.setGravity(Gravity.TOP);
+        LinearLayout.LayoutParams rlp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        rlp.topMargin = Ui.dp(c, 6);
+        rlp.leftMargin = Ui.dp(c, 6);
+        row.setLayoutParams(rlp);
+
+        TextView avatar = Ui.bold(c, firstChar(r.nickname), 9f, Ui.onAmber());
+        avatar.setGravity(Gravity.CENTER);
+        int color;
+        try {
+            color = Color.parseColor(r.avatarColor);
+        } catch (Exception e) {
+            color = 0xFF6E8494;
         }
-        if (cm.replyCount > 0) {
-            TextView reply = Ui.text(c, "回复 " + Ui.shortNum(cm.replyCount), 10f, Ui.C_DIM);
-            reply.setPadding(Ui.dp(c, 8), Ui.dp(c, 2), 0, Ui.dp(c, 2));
-            footRow.addView(reply);
+        avatar.setBackground(Ui.round(color, Ui.dp(c, 12)));
+        row.addView(avatar, Ui.lp(Ui.dp(c, 24), Ui.dp(c, 24)));
+
+        LinearLayout col = Ui.col(c);
+        LinearLayout.LayoutParams clp = Ui.lp(0, ViewGroup.LayoutParams.WRAP_CONTENT);
+        clp.weight = 1f;
+        clp.leftMargin = Ui.dp(c, 8);
+        row.addView(col, clp);
+
+        LinearLayout meta = Ui.row(c);
+        meta.addView(Ui.text(c, r.nickname, 10.5f, Ui.subText()));
+        if (!r.time.isEmpty()) {
+            meta.addView(Ui.text(c, " · " + Models.shortenTime(r.time), 9.5f, Ui.C_DIM));
         }
+        col.addView(meta);
+
+        TextView text = Ui.text(c, r.content, 11.5f, Ui.bodyText());
+        text.setLineSpacing(Ui.dp(c, 2), 1f);
+        col.addView(text);
         return row;
     }
 
     private static String likeText(Context c, Models.Comment cm, boolean liked) {
         int n = cm.likeCount + (liked ? 1 : 0);
         return "♥ " + Ui.shortNum(n);
-    }
-
-    private View row(Models.Comment cm) {
-        return row(getContext(), cm, likeKind);
-    }
-
-    private View row(Models.Comment cm, String kind) {
-        return row(getContext(), cm, kind);
     }
 
     private static String firstChar(String s) {

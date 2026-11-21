@@ -109,6 +109,45 @@ public final class MediaSave {
         return out.getAbsolutePath();
     }
 
+    /**
+     * 找已下载到 Download/Huangguo/&lt;series&gt;/&lt;fileName&gt; 的文件，返回可直接播的 uri。
+     *
+     * 下载走 MediaStore（Android 10+），落盘后拿到的是一串相对路径描述，
+     * 播放需要 content:// —— 用 RELATIVE_PATH + DISPLAY_NAME 查一次就有。
+     */
+    public static String findDownloaded(Context c, String series, String fileName) {
+        String rel = Environment.DIRECTORY_DOWNLOADS + "/Huangguo/" + sanitize(series) + "/";
+        if (Build.VERSION.SDK_INT >= 29) {
+            try (android.database.Cursor cur = c.getContentResolver().query(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    new String[]{MediaStore.Downloads._ID},
+                    MediaStore.Downloads.RELATIVE_PATH + "=? AND "
+                            + MediaStore.Downloads.DISPLAY_NAME + "=?",
+                    new String[]{rel, fileName}, null)) {
+                if (cur != null && cur.moveToFirst()) {
+                    long id = cur.getLong(0);
+                    android.net.Uri u = android.content.ContentUris.withAppendedId(
+                            MediaStore.Downloads.EXTERNAL_CONTENT_URI, id);
+                    return u.toString();
+                }
+            } catch (Exception ignored) {
+                // 查不到就走下面的文件路径探测
+            }
+        }
+        File direct = new File(Environment.getExternalStoragePublicDirectory(
+                Environment.DIRECTORY_DOWNLOADS), "Huangguo/" + sanitize(series) + "/" + fileName);
+        if (direct.exists()) return direct.getAbsolutePath();
+        File appDir = new File(c.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS),
+                "Huangguo/" + sanitize(series) + "/" + fileName);
+        if (appDir.exists()) return appDir.getAbsolutePath();
+        return null;
+    }
+
+    /** 缓存视频的目录描述（设置页展示用） */
+    public static String downloadRootLabel() {
+        return "Download/Huangguo/<剧名>/第N集.mp4";
+    }
+
     /** 文件名/目录名安全化 */
     public static String sanitize(String s) {
         if (s == null || s.trim().isEmpty()) return "未知剧集";

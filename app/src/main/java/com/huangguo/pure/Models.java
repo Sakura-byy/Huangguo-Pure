@@ -30,6 +30,12 @@ public final class Models {
         public long metricValue;
         /** 是否完结：false 时显示「更新至 N 集」，true 显示「全 N 集」 */
         public boolean finished;
+        /** 本地收藏记录：上次看到第几集（>0 且 epCount 更大时列表标「有更新」） */
+        public int seenEp;
+        /** 本地缓存记录：已缓存集数（详情页选集画已缓存点） */
+        public int cachedCount;
+        /** 站点发布时间（接口字段 created_at，形如 2026-08-07 19:16:47） */
+        public String createdAt = "";
 
         public String scoreText() {
             return score > 0 ? String.format("%.1f", score) : "";
@@ -44,6 +50,88 @@ public final class Models {
         public String epText() {
             if (epCount <= 0) return "";
             return finished ? ("全 " + epCount + " 集") : ("更新至 " + epCount + " 集");
+        }
+    }
+
+    /** 评分：my = 我打的星（0 未评），cnt = 评分人数，score = 均值 */
+    public static class Rating {
+        public int my;
+        public int cnt;
+        public double score;
+
+        public String scoreLabel() {
+            return score > 0 ? String.format("%.1f 分", score) : "暂无评分";
+        }
+    }
+
+    public static Rating rating(JSONObject o) {
+        Rating r = new Rating();
+        if (o == null) return r;
+        r.my = o.optInt("my", 0);
+        r.cnt = o.optInt("rating_cnt", o.optInt("cnt", 0));
+        String sc = o.optString("score", "");
+        try {
+            r.score = sc.isEmpty() ? o.optDouble("score", 0) : Double.parseDouble(sc);
+        } catch (Exception e) {
+            r.score = o.optDouble("score", 0);
+        }
+        return r;
+    }
+
+    /** 我的账号：昵称 + 计数 + 互动 id 列表（喜欢/收藏/关注） */
+    public static class Me {
+        public long id;
+        public String nickname = "";
+        public String avatar = "";
+        public String sign = "";
+        public String desc = "";
+        public int likeCount;
+        public int collectCount;
+        public int historyCount;
+        public int followingCount;
+        public final List<Long> likeVideoIds = new ArrayList<>();
+        public final List<Long> favoriteVideoIds = new ArrayList<>();
+        public final List<Long> likePostIds = new ArrayList<>();
+        public final List<Long> favoritePostIds = new ArrayList<>();
+        public final List<String> likeEpisodes = new ArrayList<>();
+    }
+
+    public static Me me(JSONObject data) {
+        Me m = new Me();
+        if (data == null) return m;
+        m.id = data.optLong("id", 0);
+        m.nickname = data.optString("nickname", data.optString("username", ""));
+        m.avatar = abs(data.optString("avatar", ""));
+        m.sign = data.optString("sign", "");
+        m.desc = data.optString("desc", "");
+        JSONObject counts = data.optJSONObject("counts");
+        if (counts != null) {
+            m.likeCount = counts.optInt("like", 0);
+            m.collectCount = counts.optInt("collect", 0);
+            m.historyCount = counts.optInt("history", 0);
+            m.followingCount = counts.optInt("following", 0);
+        }
+        JSONObject it = data.optJSONObject("interactions");
+        if (it != null) {
+            readIds(it.optJSONArray("like_video_ids"), m.likeVideoIds);
+            readIds(it.optJSONArray("favorite_video_ids"), m.favoriteVideoIds);
+            readIds(it.optJSONArray("like_post_ids"), m.likePostIds);
+            readIds(it.optJSONArray("favorite_post_ids"), m.favoritePostIds);
+            JSONArray eps = it.optJSONArray("like_video_episodes");
+            if (eps != null) {
+                for (int i = 0; i < eps.length(); i++) {
+                    m.likeEpisodes.add(String.valueOf(eps.opt(i)));
+                }
+            }
+        }
+        return m;
+    }
+
+    private static void readIds(JSONArray arr, List<Long> out) {
+        if (arr == null) return;
+        for (int i = 0; i < arr.length(); i++) {
+            long v = arr.optLong(i, 0);
+            if (v > 0) out.add(v);
         }
     }
 
@@ -107,6 +195,8 @@ public final class Models {
         public String desc = "";
         public String content = "";
         public String time = "";
+        /** 原始发布时间（publish_time / created_at，形如 2026-08-14 01:07:59） */
+        public String createdAt = "";
         public String authorName = "";
         public String authorAvatar = "";
         public long hot;
@@ -123,6 +213,123 @@ public final class Models {
     public static class PostVideo {
         public int index;
         public String url = "";
+    }
+
+    /** 云端历史条目（/api/users/me/history 一项） */
+    public static class HistoryItem {
+        public long videoId;
+        public String title = "";
+        public String cover = "";
+        public int lastEp;
+        public int totalEp;
+        public String category = "";
+        public String updatedAt = "";
+        public String targetType = "video";
+    }
+
+    public static class HistoryPage {
+        public final List<HistoryItem> items = new ArrayList<>();
+        public int page = 1;
+        public int pages = 1;
+        public int total;
+    }
+
+    public static HistoryPage historyPage(JSONObject data) {
+        HistoryPage hp = new HistoryPage();
+        if (data == null) return hp;
+        JSONArray arr = data.optJSONArray("items");
+        if (arr != null) {
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject o = arr.optJSONObject(i);
+                if (o == null) continue;
+                HistoryItem h = new HistoryItem();
+                h.videoId = o.optLong("video_id", o.optLong("id", 0));
+                h.title = o.optString("title", "");
+                h.cover = abs(o.optString("cover", ""));
+                h.lastEp = o.optInt("last_ep", 1);
+                h.totalEp = o.optInt("total_ep", o.optInt("episode_count", 0));
+                h.category = o.optString("category_name", "");
+                h.updatedAt = o.optString("updated_at", "");
+                h.targetType = o.optString("target_type", "video");
+                if (h.videoId > 0) hp.items.add(h);
+            }
+        }
+        JSONObject pg = data.optJSONObject("pagination");
+        if (pg != null) {
+            hp.page = pg.optInt("page", 1);
+            hp.pages = Math.max(1, pg.optInt("pages", 1));
+            hp.total = pg.optInt("total", hp.items.size());
+        }
+        return hp;
+    }
+
+    /**
+     * 解析博客分类页（服务端渲染）：
+     * 卡片是 &lt;a class="hg-cate-feed__card" href="/archives/{id}/"&gt;…
+     * 12 张/页，页数取分页链接里的最大值。
+     */
+    public static PostPage postPageFromHtml(String html, String route, int page) {
+        PostPage pg = new PostPage();
+        pg.page = page;
+        if (html == null) return pg;
+        java.util.regex.Matcher tm = java.util.regex.Pattern
+                .compile("共\\s*([0-9,]+)\\s*篇").matcher(html);
+        if (tm.find()) {
+            try {
+                pg.total = Integer.parseInt(tm.group(1).replace(",", ""));
+            } catch (Exception ignored) {
+            }
+        }
+        java.util.regex.Matcher pm = java.util.regex.Pattern
+                .compile("/blog/" + java.util.regex.Pattern.quote(route) + "/(\\d+)/")
+                .matcher(html);
+        int maxPage = 1;
+        while (pm.find()) {
+            try {
+                maxPage = Math.max(maxPage, Integer.parseInt(pm.group(1)));
+            } catch (Exception ignored) {
+            }
+        }
+        pg.pages = maxPage;
+
+        java.util.regex.Matcher cm = java.util.regex.Pattern.compile(
+                "<a class=\"hg-cate-feed__card\"[^>]*href=\"/archives/(\\d+)/\"(.*?)</a>",
+                java.util.regex.Pattern.DOTALL).matcher(html);
+        while (cm.find()) {
+            Post p = new Post();
+            try {
+                p.id = Long.parseLong(cm.group(1));
+            } catch (Exception ignored) {
+                continue;
+            }
+            String block = cm.group(2);
+            p.cover = abs(opt(block, "data-src=\"([^\"]+)\""));
+            p.title = htmlText(opt(block, "hg-cate-feed__title\">(.*?)<"));
+            p.authorName = htmlText(opt(block, "hg-cate-feed__author\">(.*?)<"));
+            String date = htmlText(opt(block, "hg-cate-feed__date\">(.*?)<"));
+            p.createdAt = date;
+            p.time = date;
+            p.desc = htmlText(opt(block, "hg-cate-feed__intro\">(.*?)<"));
+            if (p.title.isEmpty()) continue;
+            pg.items.add(p);
+        }
+        if (pg.total <= 0) pg.total = pg.items.size() * pg.pages;
+        return pg;
+    }
+
+    private static String opt(String src, String regex) {
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile(regex, java.util.regex.Pattern.DOTALL).matcher(src);
+        return m.find() ? m.group(1) : "";
+    }
+
+    /** 去标签 + 反转义（分类页里有 &amp; &quot; 之类） */
+    private static String htmlText(String s) {
+        if (s == null || s.isEmpty()) return "";
+        String t = s.replaceAll("<[^>]+>", "");
+        t = t.replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'")
+                .replace("&lt;", "<").replace("&gt;", ">").replace("&nbsp;", " ");
+        return t.trim();
     }
 
     public static class PostPage {        public final List<Post> items = new ArrayList<>();
@@ -178,6 +385,7 @@ public final class Models {
         v.metricLabel = o.optString("metric_label", "");
         v.metricValue = o.optLong("metric_value", 0);
         v.finished = o.optBoolean("is_finished", false);
+        v.createdAt = o.optString("created_at", o.optString("publish_time", ""));
         return v;
     }
 
@@ -340,7 +548,9 @@ public final class Models {
         p.content = o.optString("content", "");
         p.videoUrl = abs(o.optString("video_url", ""));
         String t = o.optString("publish_time", "");
-        p.time = shortenTime(t.isEmpty() ? o.optString("created_at", "") : t);
+        if (t.isEmpty()) t = o.optString("created_at", "");
+        p.createdAt = t;
+        p.time = shortenTime(t);
         p.hot = o.optLong("hot", 0);
         p.tags = joinTags(o.optJSONArray("tags"));
         JSONObject author = o.optJSONObject("author");

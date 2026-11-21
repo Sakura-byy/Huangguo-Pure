@@ -331,7 +331,12 @@ public class PostActivity extends AppCompatActivity {
         meta.addView(spacer, slp);
 
         StringBuilder sb = new StringBuilder();
-        if (!post.time.isEmpty()) sb.append(post.time);
+        // 发布时间：有原始时间就显示到日，没有才退回相对时间
+        if (post.createdAt != null && post.createdAt.length() >= 10) {
+            sb.append("发布于 ").append(post.createdAt.substring(0, 10));
+        } else if (!post.time.isEmpty()) {
+            sb.append(post.time);
+        }
         if (post.hot > 0) {
             if (sb.length() > 0) sb.append(" · ");
             sb.append("热度 ").append(Ui.shortNum(post.hot));
@@ -503,6 +508,18 @@ public class PostActivity extends AppCompatActivity {
             public void send(String text, Api.Cb<String> cb) {
                 Api.postPostComment(postId, text, cb);
             }
+
+            @Override
+            public void replies(long commentId, int page, Api.Cb<List<Models.Comment>> cb) {
+                // 博客留言的二级回复路由站点未提供（/api/posts/{id}/comments/{cid}/replies 实测 404）
+                cb.err("博客留言暂不支持回复");
+            }
+
+            @Override
+            public void reply(long parentId, String text, Api.Cb<String> cb) {
+                // 博客同样没有 reply_id 支持：退化成一条新留言
+                Api.postPostComment(postId, text, cb);
+            }
         }, () -> AuthDialog.show(this, false, () -> { }), Store.LIKE_PCOMMENT);
         commentSec.addView(box, Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
@@ -520,8 +537,7 @@ public class PostActivity extends AppCompatActivity {
         super.onConfigurationChanged(newConfig);
         boolean dark = Theme.isDark(this);
         if (Theme.mode() == Theme.AUTO && dark != Ui.darkGlass) {
-            Ui.applyPalette(dark);
-            recreate();
+            Ui.retheme(this);
         }
     }
 
@@ -530,8 +546,7 @@ public class PostActivity extends AppCompatActivity {
         super.onResume();
         // 兜底：配置变化发生在后台时，回到前台再补一次
         if (Ui.darkGlass != Theme.isDark(this)) {
-            Ui.applyPalette(Theme.isDark(this));
-            recreate();
+            Ui.retheme(this);
         }
     }
 }

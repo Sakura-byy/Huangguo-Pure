@@ -32,12 +32,15 @@ public final class CleanHelper {
         final Uri uri;
         final String name;
         final long size;
+        /** 所属剧名（MediaStore 的 RELATIVE_PATH 最后一段），一级菜单按它分组 */
+        final String series;
         boolean checked;
 
-        DlItem(Uri uri, String name, long size) {
+        DlItem(Uri uri, String name, long size, String series) {
             this.uri = uri;
             this.name = name;
             this.size = size;
+            this.series = series;
         }
     }
 
@@ -91,64 +94,141 @@ public final class CleanHelper {
     }
 
     /** 清理下载文件：列出 Download/Huangguo 下的视频，勾选后删除 */
+    /** 从相对路径 / 绝对路径里取「剧名」这一级目录 */
+    private static String seriesOf(String path) {
+        if (path == null || path.trim().isEmpty()) return "未分类";
+        String p = path.trim();
+        while (p.endsWith("/")) p = p.substring(0, p.length() - 1);
+        int idx = p.lastIndexOf('/');
+        String last = idx >= 0 ? p.substring(idx + 1) : p;
+        // RELATIVE_PATH 结尾是目录名；DATA 结尾是文件名，取上一级
+        if (last.contains(".")) {
+            p = idx >= 0 ? p.substring(0, idx) : p;
+            idx = p.lastIndexOf('/');
+            last = idx >= 0 ? p.substring(idx + 1) : p;
+        }
+        return last.isEmpty() ? "未分类" : last;
+    }
+
+    /**
+     * 删除下载视频：两级菜单。
+     * 一级是剧名（带总集数 / 总大小，点一下展开），二级是这一部的每一集。
+     */
     public static void showDownloads(final Context c) {
         final List<DlItem> items = queryDownloads(c);
 
         LinearLayout box = dialogContent(c);
-        TextView title = Ui.bold(c, items.isEmpty() ? "暂无下载视频" : "选择要删除的下载",
+        TextView title = Ui.bold(c, items.isEmpty() ? "暂无下载视频" : "删除下载视频",
                 16f, Ui.C_TEXT);
         box.addView(title);
 
-        final List<CheckBox> checks = new ArrayList<>();
-        if (!items.isEmpty()) {
-            ScrollView sv = new ScrollView(c);
-            LinearLayout list = Ui.col(c);
-            LinearLayout.LayoutParams lp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.topMargin = Ui.dp(c, 10);
-
-            for (final DlItem it : items) {
-                CheckBox cb = new CheckBox(c);
-                cb.setText(it.name + "  (" + Ui.fmtSize(it.size) + ")");
-                cb.setTextColor(Ui.C_TEXT);
-                cb.setTextSize(12.5f);
-                cb.setPadding(Ui.dp(c, 4), Ui.dp(c, 10), Ui.dp(c, 4), Ui.dp(c, 10));
-                cb.setChecked(false);
-                checks.add(cb);
-                list.addView(cb, lp);
-            }
-            sv.addView(list, new ScrollView.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            int listH = Ui.dp(c, Math.min(380, items.size() * 44 + 16));
-            box.addView(sv, new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, listH));
-        } else {
+        if (items.isEmpty()) {
             TextView hint = Ui.text(c, "你还没有下载过视频。", 12.5f, Ui.C_DIM);
             LinearLayout.LayoutParams hp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
             hp.topMargin = Ui.dp(c, 12);
             box.addView(hint, hp);
+            final FrameLayout[] ref0 = new FrameLayout[1];
+            box.addView(dialogButtons(c, ref0, new String[]{"知道了"}, new Runnable[]{null}));
+            showGlassDialog(c, box, ref0);
+            return;
         }
 
-        final FrameLayout[] overlayRef = new FrameLayout[1];
-        if (!items.isEmpty()) {
-            LinearLayout btns = dialogButtons(c, overlayRef,
-                    new String[]{"取消", "删除所选"},
-                    new Runnable[]{null, () -> {
-                        int n = 0;
-                        for (int i = 0; i < checks.size(); i++) {
-                            if (checks.get(i).isChecked()) {
-                                if (deleteUri(c, items.get(i).uri)) n++;
-                            }
-                        }
-                        Toast.makeText(c, "已删除 " + n + " 个下载文件", Toast.LENGTH_SHORT).show();
-                    }});
-            box.addView(btns);
-        } else {
-            LinearLayout btns = dialogButtons(c, overlayRef,
-                    new String[]{"知道了"}, new Runnable[]{null});
-            box.addView(btns);
+        // 按剧名分组，保持查询顺序
+        final List<String> groups = new ArrayList<>();
+        final List<List<DlItem>> grouped = new ArrayList<>();
+        for (DlItem it : items) {
+            int g = groups.indexOf(it.series);
+            if (g < 0) {
+                groups.add(it.series);
+                List<DlItem> list = new ArrayList<>();
+                list.add(it);
+                grouped.add(list);
+            } else {
+                grouped.get(g).add(it);
+            }
         }
+
+        final List<CheckBox> checks = new ArrayList<>();
+        ScrollView sv = new ScrollView(c);
+        LinearLayout list = Ui.col(c);
+        LinearLayout.LayoutParams lp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = Ui.dp(c, 10);
+
+        for (int g = 0; g < groups.size(); g++) {
+            final List<DlItem> eps = grouped.get(g);
+            long total = 0;
+            for (DlItem it : eps) total += it.size;
+
+            // 一级：剧名 + 集数 + 体积 + 箭头
+            LinearLayout head = Ui.row(c);
+            head.setPadding(Ui.dp(c, 10), Ui.dp(c, 11), Ui.dp(c, 10), Ui.dp(c, 11));
+            head.setBackground(Ui.subtle(c, Ui.dp(c, 12)));
+            head.setClickable(true);
+
+            LinearLayout texts = Ui.col(c);
+            LinearLayout.LayoutParams tp = Ui.lp(0, ViewGroup.LayoutParams.WRAP_CONTENT);
+            tp.weight = 1f;
+            head.addView(texts, tp);
+
+            TextView name = Ui.bold(c, groups.get(g), 13f, Ui.C_TEXT);
+            name.setMaxLines(1);
+            name.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            texts.addView(name);
+
+            TextView sub = Ui.text(c, eps.size() + " 集 · " + Ui.fmtSize(total), 10.5f, Ui.C_DIM);
+            LinearLayout.LayoutParams sp = Ui.lp(ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            sp.topMargin = Ui.dp(c, 3);
+            texts.addView(sub, sp);
+
+            final TextView arrow = Ui.text(c, "›", 15f, Ui.C_DIM);
+            arrow.setPadding(Ui.dp(c, 8), 0, 0, 0);
+            head.addView(arrow);
+            list.addView(head, lp);
+
+            // 二级：每集（默认收起）
+            final LinearLayout body = Ui.col(c);
+            body.setVisibility(View.GONE);
+            for (final DlItem it : eps) {
+                CheckBox cb = new CheckBox(c);
+                cb.setText(it.name + "  (" + Ui.fmtSize(it.size) + ")");
+                cb.setTextColor(Ui.C_TEXT);
+                cb.setTextSize(12f);
+                cb.setPadding(Ui.dp(c, 20), Ui.dp(c, 7), Ui.dp(c, 4), Ui.dp(c, 7));
+                cb.setChecked(false);
+                cb.setOnCheckedChangeListener((b, checked) -> it.checked = checked);
+                checks.add(cb);
+                body.addView(cb, Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT));
+            }
+            list.addView(body, lp);
+
+            head.setOnClickListener(v -> {
+                boolean open = body.getVisibility() != View.VISIBLE;
+                body.setVisibility(open ? View.VISIBLE : View.GONE);
+                arrow.setText(open ? "⌄" : "›");
+            });
+        }
+
+        sv.addView(list, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        int listH = Ui.dp(c, Math.min(360, (items.size() + groups.size()) * 44 + 16));
+        box.addView(sv, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, listH));
+
+        final FrameLayout[] overlayRef = new FrameLayout[1];
+        LinearLayout btns = dialogButtons(c, overlayRef,
+                new String[]{"取消", "删除所选"},
+                new Runnable[]{null, () -> {
+                    int n = 0;
+                    for (DlItem it : items) {
+                        if (it.checked && deleteUri(c, it.uri)) n++;
+                    }
+                    Toast.makeText(c, "已删除 " + n + " 个下载文件", Toast.LENGTH_SHORT).show();
+                }});
+        box.addView(btns);
         showGlassDialog(c, box, overlayRef);
     }
 
@@ -261,14 +341,16 @@ public final class CleanHelper {
             int iId = cur.getColumnIndex(proj[0]);
             int iName = cur.getColumnIndex(proj[1]);
             int iSize = cur.getColumnIndex(proj[2]);
+            int iPath = cur.getColumnIndex(proj[3]);
             while (cur.moveToNext()) {
                 long id = iId >= 0 ? cur.getLong(iId) : -1;
                 String name = iName >= 0 ? cur.getString(iName) : "下载视频";
                 long size = iSize >= 0 ? cur.getLong(iSize) : 0;
                 if (id < 0) continue;
+                String path = iPath >= 0 ? cur.getString(iPath) : "";
                 out.add(new DlItem(
                         Uri.withAppendedPath(uri, String.valueOf(id)),
-                        name == null ? "下载视频" : name, size));
+                        name == null ? "下载视频" : name, size, seriesOf(path)));
             }
         } catch (Throwable ignored) {
         } finally {

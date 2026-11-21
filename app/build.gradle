@@ -12,8 +12,8 @@ android {
         applicationId 'com.huangguo.pure'
         minSdk 24
         targetSdk 36
-        versionCode 17
-        versionName '1.1.0'
+        versionCode 21
+        versionName '1.2.0'
         resConfigs 'zh', 'en'
         // 只打 64 位：省掉 armeabi-v7a / x86 / x86_64 三套原生库与对齐填充
         ndk { abiFilters 'arm64-v8a' }
@@ -48,6 +48,14 @@ android {
 
     buildFeatures {
         compose true
+        // 关闭 BuildConfig：本工程不读 BuildConfig 字段，少生成一个类
+        buildConfig false
+    }
+
+    // 不往 APK 里塞依赖清单（Google Play 用的元数据），省 dex 与资源
+    dependenciesInfo {
+        includeInApk false
+        includeInBundle false
     }
 
     compileOptions {
@@ -58,11 +66,26 @@ android {
     lint {
         abortOnError false
         checkReleaseBuilds false
+        // release 不生成 lint 中间产物
+        checkDependencies false
     }
 
     packagingOptions {
         resources {
-            excludes += ['META-INF/versions/9/OSGI-INF/MANIFEST.MF']
+            // 许可证 / 声明类纯文本对运行零作用，压缩后也有几十 KB
+            excludes += [
+                    'META-INF/versions/9/OSGI-INF/MANIFEST.MF',
+                    'META-INF/*.version',
+                    'META-INF/*.md',
+                    'META-INF/AL2.0',
+                    'META-INF/LGPL2.1',
+                    'META-INF/LICENSE*',
+                    'META-INF/NOTICE*',
+                    'META-INF/DEPENDENCIES',
+                    'META-INF/**/LICENSE*',
+                    'META-INF/**/*.version',
+                    'DebugProbesKt.bin'
+            ]
         }
     }
 }

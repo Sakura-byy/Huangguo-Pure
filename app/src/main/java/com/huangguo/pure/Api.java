@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 import android.os.Handler;
 import android.os.Looper;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.IOException;
@@ -235,10 +236,73 @@ public final class Api {
                 .header("Accept", "application/json, text/plain, */*")
                 .header("Accept-Language", "zh-CN,zh;q=0.9")
                 .header("Referer", url);
-        String tk = Auth.token();
-        if (tk != null && !tk.isEmpty()) b.header("Authorization", "Bearer " + tk);
         if (body != null) b.post(RequestBody.create(body, JSON_TYPE));
         return b.build();
+    }
+
+    /**
+     * 站点鉴权是 <b>query 参数 ?token=</b>（实测：header Bearer / token / cookie 全部 401，
+     * ?token= 返回 200）。所有需要登录的路径都过这一层拼 token。
+     */
+    static String authPath(String path) {
+        String tk = Auth.token();
+        if (tk == null || tk.isEmpty()) return path;
+        return path + (path.contains("?") ? "&" : "?") + "token=" + tk;
+    }
+
+    /** 需要登录的 GET：自动拼 token，未登录直接报错 */
+    private static void getAuth(final String path, final Cb<JSONObject> cb) {
+        if (!Auth.loggedIn()) {
+            fail(cb, "请先登录");
+            return;
+        }
+        get(authPath(path), cb);
+    }
+
+    /** 需要登录的 POST */
+    private static void postAuth(final String path, final JSONObject body, final Cb<JSONObject> cb) {
+        if (!Auth.loggedIn()) {
+            fail(cb, "请先登录");
+            return;
+        }
+        postRaw(authPath(path), body, cb);
+    }
+
+    /** 需要登录的 DELETE（取消喜欢 / 取消收藏） */
+    private static void deleteAuth(final String path, final Cb<JSONObject> cb) {
+        if (!Auth.loggedIn()) {
+            fail(cb, "请先登录");
+            return;
+        }
+        POOL.execute(() -> {
+            try {
+                String full = authPath(path);
+                JSONObject o = null;
+                for (String base : order()) {
+                    try (Response resp = CLIENT.newCall(new Request.Builder()
+                            .url(base + full)
+                            .header("User-Agent", UA)
+                            .header("Accept", "application/json, text/plain, */*")
+                            .delete().build()).execute()) {
+                        if (resp.body() == null) continue;
+                        String text = resp.body().string();
+                        if (text.isEmpty()) continue;
+                        o = new JSONObject(text);
+                        remember(base);
+                        break;
+                    } catch (Exception ignored) {
+                    }
+                }
+                if (o == null) throw new java.io.IOException("所有线路均不可用");
+                if (o.optInt("status", 1) == 0) {
+                    fail(cb, o.optString("msg", "接口返回异常"));
+                    return;
+                }
+                success(cb, dataOf(o));
+            } catch (Exception e) {
+                fail(cb, e.getClass().getSimpleName() + ": " + e.getMessage());
+            }
+        });
     }
 
     /** 依次尝试各线路，首个返回合法 JSON 的线路胜出 */
@@ -464,6 +528,95 @@ public final class Api {
         });
     }
 
+    /**
+     * 博客分类列表：站点两个频道（黑料吃瓜 gossip / 短剧剧评 reviews）是服务端渲染页，
+     * 没有对应的 JSON 列表接口（/api/posts/category/{route} 只认 DB 分类，返回「分类不存在」），
+     * 所以这里直接抓分类页 HTML 解析卡片。
+     */
+    public static void postsByChannel(final String route, final int page,
+                                      final Cb<Models.PostPage> cb) {
+        POOL.execute(() -> {
+            try {
+                String path = page <= 1
+                        ? "/blog/" + route + "/"
+                        : "/blog/" + route + "/" + page + "/";
+                String html = fetchHtml(path);
+                if (html == null) throw new IOException("分类页抓取失败");
+                Models.PostPage pg = Models.postPageFromHtml(html, route, page);
+                if (pg.items.isEmpty()) throw new IOException("该分类暂无内容");
+                success(cb, pg);
+            } catch (Exception e) {
+                fail(cb, e.getClass().getSimpleName() + ": " + e.getMessage());
+            }
+        });
+    }
+
+    /** 抓一段 HTML（保持 UA / 线路切换；不解析 JSON） */
+    private static String fetchHtml(String path) {
+        for (String base : order()) {
+            try (Response resp = CLIENT.newCall(build(base + path, null)).execute()) {
+                if (resp.body() == null) continue;
+                String text = resp.body().string();
+                if (text != null && text.length() > 1500) {
+                    remember(base);
+                    return text;
+                }
+            } catch (Exception ignored) {
+                // 下一条线路
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 云端观看历史：GET /api/users/me/history?token=&page=
+     * 站点个人中心「历史记录」就是这条接口（实测返回 video_id / last_ep / total_ep / cover）。
+     */
+    public static void cloudHistory(int page, final Cb<Models.HistoryPage> cb) {
+        getAuth("/api/users/me/history?page=" + Math.max(1, page), new Cb<JSONObject>() {
+            @Override
+            public void ok(JSONObject data) {
+                cb.ok(Models.historyPage(data));
+            }
+
+            @Override
+            public void err(String msg) {
+                cb.err(msg);
+            }
+        });
+    }
+
+    /** 把一条本地进度写进账号：POST /api/users/me/history {video_id,last_ep,total_ep} */
+    public static void pushHistory(long videoId, int lastEp, int totalEp) {
+        if (!Auth.loggedIn() || videoId <= 0) return;
+        JSONObject body = new JSONObject();
+        try {
+            body.put("video_id", videoId);
+            body.put("last_ep", Math.max(1, lastEp));
+            if (totalEp > 0) body.put("total_ep", totalEp);
+        } catch (Exception ignored) {
+        }
+        postAuth("/api/users/me/history", body, new Cb<JSONObject>() {
+            @Override
+            public void ok(JSONObject data) {
+            }
+
+            @Override
+            public void err(String msg) {
+            }
+        });
+    }
+
+    /** 删一条云端历史：POST /api/users/me/history/delete {video_id} */
+    public static void deleteHistory(long videoId, final Cb<JSONObject> cb) {
+        JSONObject body = new JSONObject();
+        try {
+            body.put("video_id", videoId);
+        } catch (Exception ignored) {
+        }
+        postAuth("/api/users/me/history/delete", body, cb);
+    }
+
     // ------------------------------------------------------------------ 搜索
 
     public static void search(String kw, int page, final Cb<Models.Page> cb) {
@@ -500,6 +653,11 @@ public final class Api {
     }
 
     // ------------------------------------------------------------------ 详情
+
+    /** 原始详情 JSON：详情页要把它整段存成本地快照（断网可读） */
+    public static void detailRaw(long id, final Cb<JSONObject> cb) {
+        get("/api/videos/" + id, cb);
+    }
 
     public static void detail(long id, final Cb<Models.Detail> cb) {
         get("/api/videos/" + id, new Cb<JSONObject>() {
@@ -749,16 +907,140 @@ public final class Api {
         postRaw("/api/account/registerByPassword", body, cb);
     }
 
+    /** 我的账号（含 counts 与 interactions 互动 id 列表） */
     public static void me(final Cb<JSONObject> cb) {
-        get("/api/account/me", new Cb<JSONObject>() {
+        getAuth("/api/account/me", cb);
+    }
+
+    /**
+     * 影片评分：GET /api/videos/{id}/rating?token=
+     * 返回 {my, rating_cnt, score}（my = 我打的星，0 = 没打过）
+     */
+    public static void rating(long videoId, final Cb<Models.Rating> cb) {
+        get(authPath("/api/videos/" + videoId + "/rating"), new Cb<JSONObject>() {
             @Override
             public void ok(JSONObject data) {
-                cb.ok(data);
+                cb.ok(Models.rating(data));
             }
 
             @Override
             public void err(String msg) {
                 cb.err(msg);
+            }
+        });
+    }
+
+    /** 提交评分：POST /api/videos/{id}/rating?token= {score}；已评过返回 already=true 与最新均值 */
+    public static void submitRating(long videoId, int stars, final Cb<Models.Rating> cb) {
+        JSONObject body = new JSONObject();
+        try {
+            body.put("score", Math.max(1, Math.min(5, stars)));
+        } catch (Exception ignored) {
+        }
+        postAuth("/api/videos/" + videoId + "/rating", body, new Cb<JSONObject>() {
+            @Override
+            public void ok(JSONObject data) {
+                cb.ok(Models.rating(data));
+            }
+
+            @Override
+            public void err(String msg) {
+                cb.err(msg);
+            }
+        });
+    }
+
+    /**
+     * 喜欢 / 取消喜欢（按集）：POST|DELETE /api/videos/{id}/like?ep={ep}&token=
+     * 返回 {ep, ep_likes, liked, likes}
+     */
+    public static void likeVideo(long videoId, int ep, boolean on, final Cb<JSONObject> cb) {
+        String path = "/api/videos/" + videoId + "/like?ep=" + Math.max(1, ep);
+        if (on) {
+            postAuth(path, new JSONObject(), cb);
+        } else {
+            deleteAuth(path, cb);
+        }
+    }
+
+    /** 收藏 / 取消收藏：POST|DELETE /api/videos/{id}/collect?token= 返回 {collected, collects} */
+    public static void collectVideo(long videoId, boolean on, final Cb<JSONObject> cb) {
+        String path = "/api/videos/" + videoId + "/collect";
+        if (on) {
+            postAuth(path, new JSONObject(), cb);
+        } else {
+            deleteAuth(path, cb);
+        }
+    }
+
+    /**
+     * 修改资料：PATCH /api/account/profile?token=
+     * 字段：nickname / avatar / sign / desc（实测 200，返回更新后的 user）
+     */
+    public static void updateProfile(String nickname, String avatar, String sign, String desc,
+                                     final Cb<JSONObject> cb) {
+        JSONObject body = new JSONObject();
+        try {
+            if (nickname != null) body.put("nickname", nickname);
+            if (avatar != null) body.put("avatar", avatar);
+            if (sign != null) body.put("sign", sign);
+            if (desc != null) body.put("desc", desc);
+        } catch (Exception ignored) {
+        }
+        patchAuth("/api/account/profile", body, cb);
+    }
+
+    /** 二级评论：GET /api/videos/{id}/comments/{cid}/replies?page=&token= */
+    public static void commentReplies(long videoId, long commentId, int page,
+                                      final Cb<List<Models.Comment>> cb) {
+        get("/api/videos/" + videoId + "/comments/" + commentId + "/replies?page=" + page,
+                new Cb<JSONObject>() {
+                    @Override
+                    public void ok(JSONObject data) {
+                        cb.ok(Models.comments(data.optJSONArray("items")));
+                    }
+
+                    @Override
+                    public void err(String msg) {
+                        cb.err(msg);
+                    }
+                });
+    }
+
+    /** 需要登录的 PATCH（资料保存） */
+    private static void patchAuth(final String path, final JSONObject body, final Cb<JSONObject> cb) {
+        if (!Auth.loggedIn()) {
+            fail(cb, "请先登录");
+            return;
+        }
+        POOL.execute(() -> {
+            try {
+                String full = authPath(path);
+                JSONObject o = null;
+                for (String base : order()) {
+                    try (Response resp = CLIENT.newCall(new Request.Builder()
+                            .url(base + full)
+                            .header("User-Agent", UA)
+                            .header("Accept", "application/json, text/plain, */*")
+                            .patch(RequestBody.create(body == null ? "{}" : body.toString(), JSON_TYPE))
+                            .build()).execute()) {
+                        if (resp.body() == null) continue;
+                        String text = resp.body().string();
+                        if (text.isEmpty()) continue;
+                        o = new JSONObject(text);
+                        remember(base);
+                        break;
+                    } catch (Exception ignored) {
+                    }
+                }
+                if (o == null) throw new java.io.IOException("所有线路均不可用");
+                if (o.optInt("status", 1) == 0) {
+                    fail(cb, o.optString("msg", "接口返回异常"));
+                    return;
+                }
+                success(cb, dataOf(o));
+            } catch (Exception e) {
+                fail(cb, e.getClass().getSimpleName() + ": " + e.getMessage());
             }
         });
     }

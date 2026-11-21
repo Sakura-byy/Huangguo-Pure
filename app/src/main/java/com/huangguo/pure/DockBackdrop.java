@@ -39,6 +39,12 @@ public final class DockBackdrop {
     private Runnable onChange;
     private long lastSampleNs;
     private boolean destroyed;
+    /** 暂停逐帧采样：手指按在 Dock 上拖动时背景不动，重采只会抢主线程 */
+    private volatile boolean paused;
+
+    public void setPaused(boolean v) {
+        paused = v;
+    }
 
     /** 采样来源（页面容器） */
     public void setSource(View v) {
@@ -80,6 +86,8 @@ public final class DockBackdrop {
 
     private void sample(boolean force) {
         if (destroyed || source == null || target == null) return;
+        // 暂停期间只有 force（切页 / 布局变化）才允许重采
+        if (paused && !force) return;
         int w = target.getWidth(), h = target.getHeight();
         if (w <= 0 || h <= 0) return;
         if (!source.isAttachedToWindow() || !target.isAttachedToWindow()) return;

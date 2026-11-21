@@ -4,6 +4,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 应用内直接下载更新包并调起安装，不再跳浏览器 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:allowBackup="false"
@@ -29,7 +31,8 @@
         <activity
             android:name=".DetailActivity"
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode"
-            android:theme="@style/Theme.Hg" />
+            android:theme="@style/Theme.Hg"
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".TagActivity"
@@ -44,7 +47,8 @@
         <activity
             android:name=".PostActivity"
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode"
-            android:theme="@style/Theme.Hg" />
+            android:theme="@style/Theme.Hg"
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".PlayerActivity"
@@ -66,6 +70,22 @@
             android:name=".SettingsActivity"
             android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode"
             android:theme="@style/Theme.Hg" />
+        <activity
+            android:name=".AccountActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout|uiMode"
+            android:theme="@style/Theme.Hg"
+            android:windowSoftInputMode="adjustResize" />
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.huangguo.pure.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
     </application>
 
 </manifest>

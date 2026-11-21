@@ -98,6 +98,17 @@ public class CategoryPage extends FrameLayout {
                 if (dir < 0 && nextChip < 0) edgeSwipe(-1); // 三级到头(左) → 切一级「首页」
                 return;
             }
+            // 博客段带三级 chips（全部/黑料吃瓜/短剧剧评）：同样先切三级
+            if (current == 2 && views[2] instanceof BlogPage) {
+                BlogPage blog = (BlogPage) views[2];
+                if (blog.swipeChannel(dir)) return;
+                if (dir > 0) {
+                    edgeSwipe(1);        // 最右再滑 → 下一个一级页（排行）
+                } else {
+                    select(1, false);    // 最左再滑 → 上一个二级页面（专题）
+                }
+                return;
+            }
             int next = current + dir;
             if (next < 0 || next >= SEGS.length) {
                 edgeSwipe(dir);          // 二级到头 → 切一级页面

@@ -62,4 +62,29 @@ public final class Auth {
         if (sp == null) return;
         sp.edit().clear().apply();
     }
+
+    /** 上次成功同步到账号的时间（0 = 从未同步） */
+    public static long syncedAt() {
+        return sp == null ? 0L : sp.getLong("synced_at", 0L);
+    }
+
+    public static void setSyncedAt(Context c, long ms) {
+        if (sp == null) return;
+        sp.edit().putLong("synced_at", ms).apply();
+    }
+
+    /** 用户自定义头像：本地文件绝对路径（空 = 用昵称首字） */
+    public static String avatarPath() {
+        return sp == null ? "" : sp.getString("avatar_path", "");
+    }
+
+    public static void setAvatarPath(Context c, String path) {
+        if (sp == null) return;
+        sp.edit().putString("avatar_path", path == null ? "" : path).apply();
+    }
+
+    public static void setName(Context c, String name) {
+        if (sp == null || name == null) return;
+        sp.edit().putString("name", name).apply();
+    }
 }

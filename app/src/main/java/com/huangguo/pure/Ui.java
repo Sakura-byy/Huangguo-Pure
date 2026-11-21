@@ -19,6 +19,8 @@ public final class Ui {
     public static int C_SUB = 0xFF9AA3B2;
     public static int C_DIM = 0xFF6B7484;
     public static int C_AMBER = 0xFFF5B942;
+    /** 星标专用金黄：强调色在浅色模式下会压深成琥珀棕，星形图标要的是「黄」 */
+    public static int C_GOLD = 0xFFF5B942;
     public static int C_BG = 0xFF05070C;
 
     /** 当前是否深色：玻璃 tint / rim / 极光配色随它切换 */
@@ -45,6 +47,21 @@ public final class Ui {
                 : new GlassDrawable(radius, 0xF7FFFFFF, 0xF0F3F6FC, 0xE8E9EDF4, 0x4D1A2332);
     }
 
+    /**
+     * 系统深浅色变化 / 手动切主题的统一入口。
+     *
+     * 只调 recreate() 不换调色板时，重建前那一帧仍然是旧配色，
+     * 系统截图/动画里就会出现「浅底白字」「浅底浅字」的鬼影 —— 先 applyPalette，
+     * 下一帧再重建，屏幕上任何一帧都是自洽的。
+     */
+    public static void retheme(final android.app.Activity a) {
+        if (a == null || a.isFinishing()) return;
+        applyPalette(Theme.isDark(a));
+        a.getWindow().getDecorView().postDelayed(() -> {
+            if (!a.isFinishing()) a.recreate();
+        }, 32L);
+    }
+
     public static void applyPalette(boolean dark) {
         darkGlass = dark;
         if (dark) {
@@ -52,6 +69,7 @@ public final class Ui {
             C_SUB = 0xFF9AA3B2;
             C_DIM = 0xFF6B7484;
             C_AMBER = 0xFFF5B942;
+            C_GOLD = 0xFFF5B942;
             C_BG = 0xFF05070C;
             AURORA_A = 0x552B4A8F;
             AURORA_B = 0x4A7A3C1E;
@@ -62,6 +80,7 @@ public final class Ui {
             C_SUB = 0xFF37455C;    // 次级文字：深灰蓝（原 0xFF54627A 太淡）
             C_DIM = 0xFF65738A;    // 弱化文字：中深灰（原 0xFF8C99AD 太淡）
             C_AMBER = 0xFFD97706;  // 强调色：高饱和琥珀金，浅底上明显又不发脏棕
+            C_GOLD = 0xFFE9A81A;   // 星标用金黄：比强调色更黄，压在白玻璃上也一眼是黄色
             C_BG = 0xFFE8EDF5;     // 页面底色略加深，衬托浅色玻璃
             AURORA_A = 0x3D8FB4E8;
             AURORA_B = 0x36F2C27E;

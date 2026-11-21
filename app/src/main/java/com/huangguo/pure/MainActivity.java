@@ -57,17 +57,44 @@ public class MainActivity extends AppCompatActivity {
         // 所以抬手后再续一段「逐帧采样」，覆盖惯性滑行直到画面停住。
         switch (ev.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
+                // 起手点落在 Dock 上：拖动期间背景是静止的，停掉逐帧重采，
+                // 把主线程让给 Compose 的跟手动画（视觉上完全一样）
+                if (dockBackdrop != null) {
+                    dockTouch = inDock(ev);
+                    dockBackdrop.setPaused(dockTouch);
+                }
             case MotionEvent.ACTION_MOVE:
                 kickPulse(120L);
                 break;
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
+                // 手势结束：先解除暂停并补采一帧，再开收尾的采样窗口
+                if (dockTouch) {
+                    dockTouch = false;
+                    if (dockBackdrop != null) {
+                        dockBackdrop.setPaused(false);
+                        dockBackdrop.refresh();
+                    }
+                }
                 kickPulse(2200L);
                 break;
             default:
                 break;
         }
         return super.dispatchTouchEvent(ev);
+    }
+
+    /** 本次手势是否按在 Dock 上（拖动期间暂停背景采样） */
+    private boolean dockTouch;
+
+    /** 触摸点是否落在 Dock 区域内 */
+    private boolean inDock(MotionEvent ev) {
+        if (navWrap == null || navWrap.getHeight() <= 0) return false;
+        int[] loc = new int[2];
+        navWrap.getLocationOnScreen(loc);
+        float x = ev.getRawX(), y = ev.getRawY();
+        return y >= loc[1] && y <= loc[1] + navWrap.getHeight()
+                && x >= loc[0] && x <= loc[0] + navWrap.getWidth();
     }
 
     /** 逐帧采样窗口的截止时间（uptimeMillis） */
@@ -183,6 +210,8 @@ public class MainActivity extends AppCompatActivity {
 
         // 每天第一次启动检查更新（设置里的开关关掉就不跑）
         Update.checkDaily(this);
+        // 已登录且本地数据有变动：顺手把收藏/历史推给账号（未登录直接返回）
+        Sync.pushIfDirty(this);
 
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
@@ -320,7 +349,8 @@ public class MainActivity extends AppCompatActivity {
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
         if (Theme.mode() == Theme.AUTO && Theme.isDark(this) != Ui.darkGlass) {
-            recreate();
+            // 先换调色板再重建：只 recreate 不换色，会先渲染出一帧旧配色的花屏
+            Ui.retheme(this);
         }
     }
 
@@ -424,6 +454,11 @@ public class MainActivity extends AppCompatActivity {
 
             SearchPage page = new SearchPage(this, container);
             page.setOnClose(this::closeSearch);
+            // 搜索页里的「去排行页」：先收起搜索层，再切到排行 tab
+            page.setOnOpenRank(() -> {
+                closeSearch();
+                selectPrimary(2);
+            });
             searchLayer.addView(page, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
@@ -464,7 +499,7 @@ public class MainActivity extends AppCompatActivity {
         super.onResume();
         // 设置页改过外观：静态调色板已经换了，但这一屏的控件还是旧色，整页重建一次
         if (Ui.darkGlass != Theme.isDark(this)) {
-            recreate();
+            Ui.retheme(this);
             return;
         }
         kickPulse(900L);

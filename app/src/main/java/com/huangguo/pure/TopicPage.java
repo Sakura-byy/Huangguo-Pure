@@ -139,10 +139,11 @@ public class TopicPage extends FrameLayout {
             slp.topMargin = Ui.dp(c, 4);
             info.addView(sub, slp);
 
-            count = Ui.text(c, "", 10f, Ui.C_AMBER);
+            // 右上角角标：半透明深底遮罩，否则压在亮封面上完全看不清
+            count = Ui.text(c, "", 10f, Ui.C_GOLD);
             count.setGravity(Gravity.CENTER);
             count.setPadding(Ui.dp(c, 8), Ui.dp(c, 3), Ui.dp(c, 8), Ui.dp(c, 3));
-            count.setBackground(Ui.stroke(Ui.accentFill(), Ui.accentStroke(), Ui.dp(c, 9), 1));
+            count.setBackground(Ui.stroke(0xC905070C, 0x59F5B942, Ui.dp(c, 9), 1));
             FrameLayout.LayoutParams clp = new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             clp.gravity = Gravity.TOP | Gravity.END;

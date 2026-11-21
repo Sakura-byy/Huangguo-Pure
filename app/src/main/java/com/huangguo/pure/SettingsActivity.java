@@ -204,7 +204,8 @@ public class SettingsActivity extends AppCompatActivity {
     private LinearLayout cleanRow() {
         final LinearLayout wrap = baseRow();
         addGlyph(wrap, "⌫");
-        texts(wrap, "软件清理", "缓存 · 观看记录 · 下载文件");
+        // 副标题直接给出缓存视频落盘位置，找文件不用猜
+        texts(wrap, "软件清理", "缓存视频：" + MediaSave.downloadRootLabel());
         TextView arrow = Ui.text(this, "›", 15f, Ui.C_DIM);
         wrap.addView(arrow);
         wrap.setClickable(true);
@@ -378,7 +379,7 @@ public class SettingsActivity extends AppCompatActivity {
     private LinearLayout autoRow() {
         LinearLayout wrap = baseRow();
         addGlyph(wrap, "⏱");
-        texts(wrap, "自动检测更新", "每天首次启动时检查一次");
+        texts(wrap, "自动更新", "每天首次启动时检查，发现新版弹窗直接下载安装");
         final Switch sw = new Switch(this);
         sw.setChecked(Update.autoEnabled(this));
         sw.setButtonTintList(null);
@@ -405,8 +406,7 @@ public class SettingsActivity extends AppCompatActivity {
         super.onConfigurationChanged(newConfig);
         boolean dark = Theme.isDark(this);
         if (Theme.mode() == Theme.AUTO && dark != Ui.darkGlass) {
-            Ui.applyPalette(dark);
-            recreate();
+            Ui.retheme(this);
         }
     }
 
@@ -415,8 +415,7 @@ public class SettingsActivity extends AppCompatActivity {
         super.onResume();
         // 兜底：配置变化发生在后台时，回到前台再补一次
         if (Ui.darkGlass != Theme.isDark(this)) {
-            Ui.applyPalette(Theme.isDark(this));
-            recreate();
+            Ui.retheme(this);
         }
     }
 }
