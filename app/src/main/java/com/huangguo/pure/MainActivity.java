@@ -34,7 +34,9 @@ public class MainActivity extends AppCompatActivity {
     private FrameLayout container;
     private FrameLayout pageHost;
     private FrameLayout navWrap;
-    private GlassDock dock;
+    private androidx.compose.ui.platform.ComposeView dockView;
+    private com.huangguo.pure.glass.DockState dockState;
+    private DockBackdrop dockBackdrop;
     private FrameLayout searchFab;
     private FrameLayout searchLayer;
     private boolean searchOpen = false;
@@ -49,9 +51,18 @@ public class MainActivity extends AppCompatActivity {
     /** 任何触摸都让玻璃采样进全速档：滚动列表时折射逐帧跟手，松手后自动退避 */
     @Override
     public boolean dispatchTouchEvent(MotionEvent ev) {
-        if (dock != null) dock.poke();
+        // 采样放到下一帧，别在触摸分发路径里做软件绘制，否则 tap 会被主线程阻塞吃掉
+        if (dockBackdrop != null && dockView != null && !backdropPokeScheduled) {
+            backdropPokeScheduled = true;
+            dockView.postDelayed(() -> {
+                backdropPokeScheduled = false;
+                if (dockBackdrop != null) dockBackdrop.poke();
+            }, 120);
+        }
         return super.dispatchTouchEvent(ev);
     }
+
+    private boolean backdropPokeScheduled = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -114,7 +125,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        dock.select(0);
+        select(0);
 
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
@@ -122,7 +133,7 @@ public class MainActivity extends AppCompatActivity {
                 if (searchOpen) {
                     closeSearch();
                 } else if (current != 0) {
-                    dock.select(0);
+                    select(0);
                 } else {
                     finish();
                 }
@@ -157,14 +168,38 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void buildNav() {
-        dock = new GlassDock(this, LABELS, ICONS, this::select);
-        dock.setBackdropSource(container);
+        // 液态玻璃 Dock：Java 壳体（ComposeView）+ 官方 backdrop 库的 Compose 玻璃栏
+        dockView = new androidx.compose.ui.platform.ComposeView(this);
+        dockView.setBackgroundColor(Color.TRANSPARENT);
+        dockState = new com.huangguo.pure.glass.DockState();
+        dockBackdrop = new DockBackdrop();
+        dockBackdrop.setSource(container);
+
         FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 78));
+                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 64));
         blp.leftMargin = Ui.dp(this, 18);
         blp.rightMargin = Ui.dp(this, 18);
         blp.bottomMargin = Ui.dp(this, 10);
-        navWrap.addView(dock, blp);
+        navWrap.addView(dockView, blp);
+
+        dockBackdrop.setTarget(dockView);
+        applyDockTheme();
+        java.util.List<Integer> icons = new java.util.ArrayList<>();
+        for (int r : ICONS) icons.add(r);
+        com.huangguo.pure.glass.GlassBridgeKt.installGlassDock(
+                dockView, dockState, dockBackdrop,
+                java.util.Arrays.asList(LABELS), icons, this::select);
+        dockView.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) ->
+                dockBackdrop.refresh());
+    }
+
+    /** 主题切换 / 重建时同步 Dock 配色（Compose 状态，主线程写） */
+    private void applyDockTheme() {
+        if (dockState == null) return;
+        dockState.setLight(!Ui.darkGlass);
+        dockState.setIconTint(Ui.C_TEXT);
+        dockState.setLabelColor(Ui.C_TEXT);
+        dockState.setAccent(Ui.darkGlass ? 0xFF0091FF : 0xFF0088FF);
     }
 
     /** 供子页面在自身二级/三级滑到边界时请求切换一级页 */
@@ -173,8 +208,18 @@ public class MainActivity extends AppCompatActivity {
         select(idx);
     }
 
+    @Override
+    protected void onDestroy() {
+        if (dockBackdrop != null) {
+            dockBackdrop.destroy();
+            dockBackdrop = null;
+        }
+        super.onDestroy();
+    }
+
     private void select(int idx) {
-        android.util.Log.d("DockTap", "MainActivity.select(" + idx + ")");
+        // Compose 侧选中态与 Java 页面对齐：点击 / 拖动 / 返回键都走这里
+        if (dockState != null) dockState.setSelected(idx);
         if (idx == current) return;
         current = idx;
         if (pages[idx] == null) {
@@ -210,7 +255,7 @@ public class MainActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         if (searchFab != null && !searchOpen) searchFab.setVisibility(View.VISIBLE);
         // 换页后立刻重采一次玻璃背景，否则 Dock 里还留着上一页的折影像
-        if (dock != null) pageHost.post(() -> dock.refresh());
+        if (dockBackdrop != null) pageHost.post(() -> dockBackdrop.refresh());
     }
 
     // ------------------------------------------------------------------ 主题
