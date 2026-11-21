@@ -88,6 +88,68 @@ public final class Api {
         applyMirrors(prefs.getString("mirrors", ""));
     }
 
+    /** 内置兜底线路（只读） */
+    public static String[] builtinHosts() {
+        return BUILTIN.clone();
+    }
+
+    /** 已测速的线路表：url|ms 逗号分隔，来自发布页同步或手动测速 */
+    public static java.util.List<Mirror.Line> lines() {
+        java.util.List<Mirror.Line> out = new java.util.ArrayList<>();
+        if (prefs == null) return out;
+        String raw = prefs.getString("lines", "");
+        if (raw.isEmpty()) return out;
+        for (String seg : raw.split(",")) {
+            String v = seg.trim();
+            int cut = v.lastIndexOf('|');
+            if (cut <= 0) continue;
+            String url = v.substring(0, cut);
+            int ms;
+            try {
+                ms = Integer.parseInt(v.substring(cut + 1));
+            } catch (NumberFormatException e) {
+                ms = -1;
+            }
+            if (url.startsWith("http")) out.add(new Mirror.Line(url, ms));
+        }
+        return out;
+    }
+
+    /** 保存测速结果：线路顺序 + 延迟都落盘，重启后不用重测 */
+    public static void saveLines(java.util.List<Mirror.Line> ls) {
+        if (prefs == null || ls == null) return;
+        StringBuilder order = new StringBuilder();
+        StringBuilder detail = new StringBuilder();
+        for (Mirror.Line l : ls) {
+            if (order.length() > 0) order.append(',');
+            order.append(l.url);
+            if (detail.length() > 0) detail.append(',');
+            detail.append(l.url).append('|').append(l.ms);
+        }
+        prefs.edit().putString("mirrors", order.toString())
+                .putString("lines", detail.toString())
+                .apply();
+        applyMirrors(order.toString());
+    }
+
+    /** 手动切线路：移到表首并立刻生效 */
+    public static void useHost(String url) {
+        if (url == null || !url.startsWith("http")) return;
+        remember(url);
+        synchronized (HOSTS) {
+            HOSTS.remove(url);
+            HOSTS.add(0, url);
+            if (prefs != null) {
+                StringBuilder sb = new StringBuilder();
+                for (String h : HOSTS) {
+                    if (sb.length() > 0) sb.append(',');
+                    sb.append(h);
+                }
+                prefs.edit().putString("mirrors", sb.toString()).apply();
+            }
+        }
+    }
+
     /** 把发布页同步到的地址塞进线路表最前面，再补内置兜底 */
     private static void applyMirrors(String csv) {
         HOSTS.clear();
@@ -121,18 +183,18 @@ public final class Api {
     }
 
     private static boolean syncMirrorsBlocking() {
-        java.util.List<String> got = Mirror.fetch();
-        if (got.isEmpty()) return false;
-        StringBuilder sb = new StringBuilder();
-        for (String h : got) {
-            if (sb.length() > 0) sb.append(',');
-            sb.append(h);
-        }
+        // 抓发布页 → 并发测速 → 按延迟排序，最快的那条自动排到表首
+        java.util.List<Mirror.Line> lines = Mirror.fetchRanked();
+        if (lines.isEmpty()) return false;
+        saveLines(lines);
         if (prefs != null) {
-            prefs.edit().putString("mirrors", sb.toString())
-                    .putLong("mirror_at", System.currentTimeMillis()).apply();
+            prefs.edit().putLong("mirror_at", System.currentTimeMillis()).apply();
         }
-        applyMirrors(sb.toString());
+        // 没有手动锁定过线路时，直接走最快的
+        if (prefs == null || prefs.getString("host", "").isEmpty()) {
+            String best = lines.get(0).url;
+            if (lines.get(0).ms >= 0) useHost(best);
+        }
         return true;
     }
 

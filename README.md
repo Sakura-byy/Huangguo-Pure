@@ -4,12 +4,12 @@
 
 **一款以「液态玻璃」为设计语言的第三方短剧客户端**
 
-原生 Android · Kotlin-free 纯 Java · 无广告 · 无推荐算法 · 双主题全适配
+原生 Android · 无广告 · 无推荐算法 · 深 / 浅双主题全适配
 
 [![Release](https://img.shields.io/github/v/release/Zihium/Huangguo-Pure?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC)](https://github.com/Zihium/Huangguo-Pure/releases)
 [![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Android%207.0%2B-green)]()
-[![Size](https://img.shields.io/badge/APK-1.4MB-orange)]()
+[![Size](https://img.shields.io/badge/APK-1.9MB-orange)]()
 
 </div>
 
@@ -17,38 +17,58 @@
 
 ## 简介
 
-Huangguo Pure 是一个第三方短剧聚合播放客户端。整个 App 围绕一套自研的 **Liquid Glass（液态玻璃）** 视觉体系构建：真实的背景采样、边缘 RGB 色散折射、按压凸起物理动效，配合深浅双主题的全量手工适配。功能上覆盖浏览、搜索、播放、下载、收藏、评论、专题、博客、排行榜的完整闭环。
+Huangguo Pure 是一个第三方短剧聚合播放客户端，围绕液态玻璃视觉体系构建：玻璃控件对身后内容做真实像素采样，边缘折射、按压形变、拖动时光纹跟随手指变化。功能上覆盖浏览、搜索、播放、下载、收藏、评论、专题、博客、排行榜，并带检测更新、多线路切换等自维护能力。
 
 ## 截图预览
 
-| 首页（浅色） | 详情页 | 专题页 |
+| 首页 | 发现 | 我的 |
 |:---:|:---:|:---:|
-| ![首页](docs/screenshots/home-light.png) | ![详情](docs/screenshots/detail.png) | ![专题](docs/screenshots/topics.png) |
+| ![首页](docs/screenshots/home-light.jpg) | ![发现](docs/screenshots/discover.jpg) | ![我的](docs/screenshots/mine.jpg) |
 
-| 我的（浅色） | 清理弹窗（液态玻璃） | 主题切换菜单 |
-|:---:|:---:|:---:|
-| ![我的](docs/screenshots/mine.png) | ![清理](docs/screenshots/clean-menu.png) | ![主题](docs/screenshots/theme-menu.png) |
+### 液态玻璃 Dock
 
-| Dock 玻璃容器 | 按压色散折射 | 播放器顶栏（视频帧折射） | 播放器底栏 |
-|:---:|:---:|:---:|:---:|
-| ![Dock](docs/screenshots/dock-glass.png) | ![按压](docs/screenshots/dock-press.png) | ![顶栏](docs/screenshots/player-top-glass.png) | ![底栏](docs/screenshots/player-bottom-glass.png) |
+按压时玻璃胶囊放大到 78dp，上下各越出 64dp 栏体 7dp，胶囊里能看到被折射掰弯的栏体边框；横向拖动跟手，光纹随手指方向和速度变形，图标强调色跟着实时槽位切换。
+
+![Dock 演示](docs/screenshots/dock-demo.gif)
+
+| 播放器竖屏（悬浮控制条） | 播放器横屏（控制条铺满屏宽） |
+|:---:|:---:|
+| ![竖屏播放器](docs/screenshots/player-portrait.jpg) | ![横屏播放器](docs/screenshots/player-landscape.jpg) |
+
+## v1.1.0 相比 1.0.0 的更新
+
+**Dock 玻璃栏重做**：底栏从自研 `LiquidGlassDrawable` 迁移到 Kyant0/AndroidLiquidGlass（Compose），按压 / 拖动的形变、折射、色散全部实时计算。胶囊放大越出栏体、栏体边框折射进胶囊、光纹跟手，都是这一版新增的观感。滑动帧率从掉帧调到 0% janky（50th 帧耗时 16ms 上下）。
+
+**页面结构**：
+
+- 「分类」更名「发现」，图标换成罗盘，专题与博客仍并在这一个入口里
+- 顶栏与页面背景融合，去掉分隔线；首页搜索框移到标题右侧
+- 「我的」页新增设置入口；外观、软件清理移入设置页
+
+**设置中心（新增）**：外观三态（跟随系统 / 浅色 / 深色）、软件清理、线路切换、检测更新、自动检测更新开关、版本信息。线路切换从发布页拉取全部可用线路并发测速，按延迟排序，点击即切换。
+
+**检测更新（新增）**：手动检测 + 每天首次启动自动检测（可关），更新弹窗和更新日志都是液态玻璃面板；数据源在 GitHub Releases，另配多个镜像发布页做防失效。
+
+**深浅色跟随系统**：外观选「跟随系统」时，系统切换深浅色，应用在当前页面原地换色，不再跳回首页；设置页、关于页、专题页、标签页等全部二级页面同样生效。
+
+**播放器**：全屏按钮改为「横屏」文字；横屏时顶栏与底部控制条铺满屏宽（左右零边距、直角贴边），竖屏保持悬浮卡片样式。
+
+**其它**：视频详情页顶栏重排（返回键不再与状态栏重叠，去掉「含视频与评论」字样）；专题、标签、关于页顶栏避开状态栏；标签页返回键玻璃底色适配浅色主题；应用图标更换。
 
 ## 核心特色
 
-### 🔷 自研 Liquid Glass 液态玻璃引擎
+### 🔷 液态玻璃，两套引擎各管一段
 
-不是「圆角 + 半透明」的仿真，而是一套完整的光学模拟：
+- **Dock 玻璃栏**：Kyant0/AndroidLiquidGlass（Compose）。Java 侧把玻璃矩形从原生视图树截成位图（3 倍降采样 + 自适应节流），Compose 侧做 vibrancy / blur / lens / 色散。采样泵覆盖触摸、惯性滑行、切页、启动四个窗口，玻璃里的背景逐帧跟着画面走。
+- **播放器与弹层**：自研 `LiquidGlassDrawable`（BitmapMesh 折射 + 三通道色散 + 法线高光）。播放器顶栏 / 底栏每 300ms 采样视频帧，玻璃里透出的是正在播放的画面折射；菜单、弹窗、玻璃面板共用一套。
 
-- **背景实时采样**：玻璃控件对身后内容做真实像素采样，滚动时折射内容随之流动
-- **RGB 三通道色散**：按压 Dock 栏时，玻璃容器边缘出现真实的彩虹色散——红/绿/蓝三套 mesh 顶点沿法线分离，再以 `MULTIPLY` 提取单通道 + `ADD` 叠加合成，中心区域零形变、精确还原原色
-- **按压物理动效**：按下时胶囊凸起放大、色散增强，抬起回弹，全程容器高光边缘可见
-- **播放器真玻璃**：播放器顶栏/底栏每 300ms 采样视频帧（`TextureView.getBitmap`），裁剪出面板对应区域喂给玻璃引擎——玻璃里透出的是正在播放的画面折射
+### 🌗 深色模式
 
-### 🌗 深 / 浅双主题全量手工适配
+深浅双主题全量手工适配，跟随系统切换时当前页面原地换色。深色下玻璃 tint、描边、文字、chip、进度条各自有一套取值，压在海报 scrim 上的文字保持恒白。
 
-- 一键切换，全 App 每一个控件（页面文字、玻璃面板、弹窗菜单、进度条、chip、输入框、滚动条）均为主题感知
-- 压在海报/封面 scrim 上的文字恒白，页面文字随主题，两套配色互不干扰
-- 浅色主题强调色为高饱和琥珀金（`#D97706`），Dock 选中、按钮、高亮统一取色
+| 深色首页 | 深色我的 |
+|:---:|:---:|
+| ![深色首页](docs/screenshots/dark-home.jpg) | ![深色我的](docs/screenshots/dark-mine.jpg) |
 
 ### 🎬 全手势播放器
 
@@ -56,51 +76,44 @@ Huangguo Pure 是一个第三方短剧聚合播放客户端。整个 App 围绕�
 |---|---|
 | 双击左 / 右 1/3 画面 | 后退 / 快进 10 秒（带画面提示 + 震动反馈） |
 | 双击中间 | 暂停 / 播放 |
-| 左右横滑画面 | 拖动进度（低灵敏度，带时间预览提示） |
+| 左右横滑画面 | 拖动进度（低灵敏度，带时间预览） |
 | 长按画面 | 2.0x 倍速加速 |
 | 长按 + 上滑 | 锁定倍速；下滑恢复 |
 | 单击中间 | 显示 / 隐藏控制层 |
-| 底栏「画面」按钮 | 自适应原比例（letterbox） / 铺满全屏 / 强制 16:9 / 强制 4:3 |
+| 底栏「画面」按钮 | 自适应原比例 / 铺满全屏 / 强制 16:9 / 强制 4:3 |
 
-- 视频默认**自适应原比例**显示，不强制拉伸，黑底居中
-- 倍速菜单：0.5x ~ 3.0x 六档，液态玻璃弹出面板
-- 断点续播：退出后从历史位置继续，逐集记忆
-- 音频焦点 / 插耳机自动暂停（`handleAudioBecomingNoisy`）
+- 视频默认自适应原比例，不强制拉伸
+- 倍速菜单 0.5x ~ 3.0x 六档，液态玻璃弹出面板
+- 横屏控制条铺满屏宽，选集 / 下载 / 评论 / 画面设置都在一条里
+- 断点续播，逐集记忆；音频焦点 / 插耳机自动暂停
 
-### 📥 完整的下载体系
+### 📥 下载与数据
 
-- HLS 流逐段下载，实时进度百分比写在按钮上
-- 按「剧名」归档到 `Download/Huangguo/<剧名>/`
-- 下载管理：批量勾选删除，文件大小统计
-
-### 🗂 内容与社区功能
-
-- **首页**：精选推荐、焦点 Banner、分类横滑、最近在看（带续播进度）
-- **分类**：剧集 / 专题 / 博客三大段，剧集段带短剧 / 漫剧三级分类
-- **专题**：专题专辑聚合页 + 详情页剧集列表
-- **博客**：图文文章正文（富文本渲染）+ 评论区
-- **排行榜**：热播榜 / 推荐榜 / 上升榜，热度指数可视化
-- **搜索**：关键字实时搜索
-- **评论**：详情页与博客文章的评论区，匿名头像取昵称首字着色
-- **收藏 / 历史**：混合收藏（剧 / 文章 / 专题）、观看历史续播，滑动删除（液态玻璃圆钮）
-- **图片查看器**：博客配图全屏缩放查看、一键保存到相册
-- **清理工具**：缓存清理 + 下载文件管理，液态玻璃弹窗
+- HLS 流逐段下载，进度实时写在按钮上
+- 按「剧名」归档到 `Download/Huangguo/<剧名>/`，支持批量删除
+- 收藏 / 历史 / 点赞存本地 SQLite，登录后与站内账号互通
 
 ### ↔ 一体化滑动导航
 
-一级页面（首页 → 分类 → 排行 → 我的）左右滑动直达；分类页内部的二级 / 三级分类滑到边界后继续滑动，自动接续切换到相邻一级页面——整 App 像一条连续的横向胶卷。
+一级页面（首页 → 发现 → 排行 → 我的）左右滑动直达；发现页内部的剧集 / 专题 / 博客分段滑到边界后继续滑动，接续切换到相邻一级页面。
+
+### 🛠 自维护能力
+
+- 检测更新：GitHub Releases + 多个镜像发布页，多源并发测速挑最快线路
+- 线路切换：全部线路的延迟实时显示，一键切换
+- 软件清理：缓存与下载文件管理
 
 ## 技术栈
 
 | 项 | 实现 |
 |---|---|
-| 语言 | Java（全项目 46 个类，无 Kotlin） |
+| 页面层 | Java（纯代码构建，无 XML 布局） |
+| Dock 玻璃栏 | Compose + Kyant0/AndroidLiquidGlass（backdrop 1.0.6 / shapes 1.2.0） |
+| 播放器与弹层玻璃 | Java 自研 `LiquidGlassDrawable`（BitmapMesh 折射 + 三通道色散） |
 | 播放内核 | Media3 / ExoPlayer（HLS） |
-| 最低支持 | Android 7.0（API 24） |
-| UI | 纯代码构建，无 XML 布局依赖 |
-| 玻璃引擎 | 自研 `LiquidGlassDrawable`（BitmapMesh 折射 + 三通道色散 + 法线高光 rim） |
+| 最低支持 | Android 7.0（API 24）；玻璃效果完整体验需 Android 12+ |
 | 本地存储 | SQLite（收藏 / 历史 / 点赞，含版本迁移） |
-| 体积 | APK 约 1.4MB，无混淆依赖膨胀 |
+| 体积 | APK 约 1.9MB（arm64-v8a） |
 
 ## 构建
 
@@ -122,12 +135,16 @@ Huangguo Pure 是一个第三方短剧聚合播放客户端。整个 App 围绕�
 app/src/main/java/com/huangguo/pure/
 ├── MainActivity / HomePage / CategoryPage / RankPage / MinePage   # 一级页面
 ├── DetailActivity / TopicActivity / TopicPage / PostActivity      # 二级页面
-├── SearchPage / AboutActivity / ImageViewerActivity               # 辅助页面
+├── SearchPage / SettingsActivity / AboutActivity                  # 设置与辅助页面
 ├── PlayerActivity                                                  # 全手势播放器
-├── GlassDock / LiquidGlassDrawable / GlassDrawable / GlassSurface  # 液态玻璃引擎
-├── GlassMenu / PullRefresh / Ui / Theme                            # 通用组件
-├── Store / Api / HlsDownloader / MediaSave / CleanHelper           # 数据与下载
-└── CommentBox / HtmlRich / PosterCard / FeedAdapter / PagedGrid    # 内容组件
+├── GlassHeader / GlassSurface / LiquidGlassDrawable / GlassDrawable # 玻璃引擎（Java 层）
+├── DockBackdrop / Backdrop                                         # Dock 原生采样
+├── glass/                                                          # Dock Compose 玻璃栏
+│   ├── LiquidBottomTabs / LiquidBottomTab / GlassDockTabs / GlassBridge
+│   ├── DampedDragAnimation / InteractiveHighlight / DockState
+├── Update / Mirror / Api / Store                                   # 更新与数据
+├── HlsDownloader / MediaSave / CleanHelper                         # 下载与清理
+└── CommentBox / HtmlRich / PosterCard / PagedGrid                  # 内容组件
 ```
 
 ## License

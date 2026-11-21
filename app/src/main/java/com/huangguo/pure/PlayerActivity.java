@@ -109,7 +109,7 @@ public class PlayerActivity extends AppCompatActivity {
     private TextView epLabel;
     private TextView speedBtn;
     private TextView boostTip;
-    private FrameLayout orientBtn;
+    private TextView orientBtn;
     private GridLayout epGrid;
     private TextView statusTip;
 
@@ -248,6 +248,16 @@ public class PlayerActivity extends AppCompatActivity {
 
     // ------------------------------------------------------------------ 视图
 
+    /** 状态栏高度：优先取系统资源，取不到用 24dp 兜底 */
+    private int statusBarHeight() {
+        int id = getResources().getIdentifier("status_bar_height", "dimen", "android");
+        if (id > 0) {
+            int h = getResources().getDimensionPixelSize(id);
+            if (h > 0) return h;
+        }
+        return Ui.dp(this, 24);
+    }
+
     private void buildOverlay(FrameLayout root) {
         overlay = new FrameLayout(this);
         root.addView(overlay, new FrameLayout.LayoutParams(
@@ -269,7 +279,9 @@ public class PlayerActivity extends AppCompatActivity {
         tp.gravity = Gravity.TOP;
         tp.leftMargin = Ui.dp(this, 12);
         tp.rightMargin = Ui.dp(this, 12);
-        tp.topMargin = Ui.dp(this, 12);
+        // 沉浸式下状态栏平时是隐藏的，但从边缘划出时（BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE）
+        // 会盖在返回键上，所以安全区要按状态栏高度让出来
+        tp.topMargin = Ui.dp(this, 12) + statusBarHeight();
         overlay.addView(topPanel, tp);
 
         FrameLayout backWrap = new FrameLayout(this);
@@ -334,6 +346,8 @@ public class PlayerActivity extends AppCompatActivity {
         bp.bottomMargin = Ui.dp(this, 16);
         overlay.addView(bottomPanel, bp);
 
+        applyOverlayWidth();
+
         LinearLayout seekRow = Ui.row(this);
         bottomPanel.addView(seekRow, Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 30)));
 
@@ -381,13 +395,22 @@ public class PlayerActivity extends AppCompatActivity {
         // 画面设置按钮：全屏键左边（替换原点赞按钮）
         buildDisplayButton(toolRow);
 
-        View filler = new View(this);
-        LinearLayout.LayoutParams flp = Ui.lp(0, 1);
-        flp.weight = 1f;
-        toolRow.addView(filler, flp);
-
-        // 全屏按钮：放到原「长按 2.0x」所在的最右格
+        // 全屏按钮和其它 chip 一样只吃 8dp 左间距：
+        // 原来这里塞了个 weight=1 的 filler 把它顶到最右，那一格间距和其它按钮对不齐，很突兀
         buildOrientButton(toolRow);
+
+        // 相邻 chip 之间插弹性 spacer：横屏时可见，把整排按钮均匀铺满屏宽；
+        // 竖屏 GONE，保持紧凑左对齐
+        toolSpacers.clear();
+        int m = toolRow.getChildCount();
+        for (int i = 0; i < m - 1; i++) {
+            View gap = new View(this);
+            gap.setVisibility(View.GONE);
+            LinearLayout.LayoutParams gp = Ui.lp(0, 1);
+            gp.weight = 1f;
+            toolRow.addView(gap, 2 * i + 1, gp);
+            toolSpacers.add(gap);
+        }
 
         seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
@@ -410,6 +433,8 @@ public class PlayerActivity extends AppCompatActivity {
 
         buildSheet();
         buildSpeedMenu();
+        // spacer 建完再算一次：直接进横屏（如自动横屏）时也要铺满
+        applyOverlayWidth();
     }
 
     // ------------------------------------------------------------------ 倍速菜单
@@ -679,18 +704,12 @@ public class PlayerActivity extends AppCompatActivity {
 
     /** 工具条最右格横屏按钮：点一次切横屏，再点回竖屏（manifest 已配 configChanges，不重建 Activity） */
     private void buildOrientButton(LinearLayout toolRow) {
-        FrameLayout wrap = new FrameLayout(this);
-        wrap.setBackground(Ui.stroke(Ui.chipFill(), Ui.chipStroke(), Ui.dp(this, 14), 1));
-        wrap.setClickable(true);
-        ImageView ic = new ImageView(this);
-        ic.setImageResource(R.drawable.ic_fullscreen);
-        ic.setColorFilter(Ui.C_TEXT);
-        wrap.addView(ic, new FrameLayout.LayoutParams(
-                Ui.dp(this, 16), Ui.dp(this, 16), Gravity.CENTER));
-        wrap.setOnClickListener(v -> toggleOrientation());
-        int side = Ui.dp(this, 32);
-        toolRow.addView(wrap, Ui.lp(side, side));
-        orientBtn = wrap;
+        // 文字胶囊，和「1.0x / 选集 / 画面」完全同一套样式与 8dp 间距，
+        // 原来是个 32dp 方形图标按钮，比其它 chip 矮一截、间距也对不齐
+        TextView btn = toolChip("横屏");
+        btn.setOnClickListener(v -> toggleOrientation());
+        toolRow.addView(btn, chipLp(8));
+        orientBtn = btn;
         syncOrientIcon();
     }
 
@@ -706,11 +725,8 @@ public class PlayerActivity extends AppCompatActivity {
     }
 
     private void syncOrientIcon() {
-        if (orientBtn == null) return;
-        View child = orientBtn.getChildAt(0);
-        if (child != null) child.setRotation(
-                getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE
-                        ? 90f : 0f);
+        // 文字按钮不再需要旋转图标，保持「横屏」字样
+        if (orientBtn != null) orientBtn.setText("横屏");
     }
 
     @Override
@@ -723,7 +739,45 @@ public class PlayerActivity extends AppCompatActivity {
         ctl.setSystemBarsBehavior(
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
         syncOrientIcon();
-        if (overlay != null) overlay.requestLayout();
+        if (overlay != null) {
+            overlay.requestLayout();
+            // 横竖屏切换后重算控制条宽度：横屏铺满屏宽贴边，竖屏悬浮卡片
+            applyOverlayWidth();
+        }
+    }
+
+    /** 横屏时顶/底控制条铺满屏宽：左右零边距贴边、底部贴边、圆角改直角；竖屏保持悬浮卡片 */
+    private final java.util.List<View> toolSpacers = new java.util.ArrayList<>();
+
+    private void applyOverlayWidth() {
+        if (topPanel == null || bottomPanel == null) return;
+        boolean land = getResources().getConfiguration().orientation
+                == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
+        int side = land ? 0 : Ui.dp(this, 12);
+        int tint = Ui.darkGlass ? 0x66121522 : 0x66FFFFFF;
+        float rad = land ? 0f : Ui.dp(this, 22);
+        float ref = Ui.dp(this, 8);
+
+        FrameLayout.LayoutParams tp = (FrameLayout.LayoutParams) topPanel.getLayoutParams();
+        tp.leftMargin = side;
+        tp.rightMargin = side;
+        tp.topMargin = (land ? Ui.dp(this, 6) : Ui.dp(this, 12)) + statusBarHeight();
+        topPanel.setLayoutParams(tp);
+        topGlass = new LiquidGlassDrawable(rad, tint, ref, 0f);
+        topPanel.setBackground(topGlass);
+
+        FrameLayout.LayoutParams bp = (FrameLayout.LayoutParams) bottomPanel.getLayoutParams();
+        bp.leftMargin = side;
+        bp.rightMargin = side;
+        bp.bottomMargin = land ? 0 : Ui.dp(this, 16);
+        bottomPanel.setLayoutParams(bp);
+        bottomGlass = new LiquidGlassDrawable(rad, tint, ref, 0f);
+        bottomPanel.setBackground(bottomGlass);
+
+        // 横屏拉开 chip 间距铺满整排，竖屏收拢回紧凑左对齐
+        for (View gap : toolSpacers) {
+            gap.setVisibility(land ? View.VISIBLE : View.GONE);
+        }
     }
 
     private TextView toolChip(String text) {

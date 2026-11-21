@@ -60,13 +60,13 @@ public class MinePage extends FrameLayout implements PullRefresh.Refreshable {
         root.addView(accountRow, alp);
         paintAccount();
 
-        LinearLayout themeRow = buildThemeRow(c);
-        LinearLayout.LayoutParams tlp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
+        LinearLayout settingsRow = buildSettingsRow(c);
+        LinearLayout.LayoutParams slp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
-        tlp.leftMargin = Ui.dp(c, 16);
-        tlp.rightMargin = Ui.dp(c, 16);
-        tlp.bottomMargin = Ui.dp(c, 8);
-        root.addView(themeRow, tlp);
+        slp.leftMargin = Ui.dp(c, 16);
+        slp.rightMargin = Ui.dp(c, 16);
+        slp.bottomMargin = Ui.dp(c, 8);
+        root.addView(settingsRow, slp);
 
         LinearLayout aboutRow = buildAboutRow(c);
         LinearLayout.LayoutParams olp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
@@ -75,14 +75,6 @@ public class MinePage extends FrameLayout implements PullRefresh.Refreshable {
         olp.rightMargin = Ui.dp(c, 16);
         olp.bottomMargin = Ui.dp(c, 8);
         root.addView(aboutRow, olp);
-
-        LinearLayout cleanRow = buildCleanRow(c);
-        LinearLayout.LayoutParams clp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        clp.leftMargin = Ui.dp(c, 16);
-        clp.rightMargin = Ui.dp(c, 16);
-        clp.bottomMargin = Ui.dp(c, 8);
-        root.addView(cleanRow, clp);
 
         LinearLayout seg = Ui.row(c);
         seg.setPadding(Ui.dp(c, 16), Ui.dp(c, 6), Ui.dp(c, 16), Ui.dp(c, 8));
@@ -178,19 +170,17 @@ public class MinePage extends FrameLayout implements PullRefresh.Refreshable {
         return wrap;
     }
 
-    /** 外观设置行：左侧模式圆徽 + 标题副标 + 右侧当前模式胶囊 + 箭头 */
-    private LinearLayout buildThemeRow(Context c) {
+    /** 设置入口：外观 / 软件清理 / 检测更新 都收进设置页了 */
+    private LinearLayout buildSettingsRow(Context c) {
         LinearLayout wrap = Ui.row(c);
         wrap.setMinimumHeight(Ui.dp(c, 62));
         wrap.setPadding(Ui.dp(c, 12), Ui.dp(c, 10), Ui.dp(c, 14), Ui.dp(c, 10));
         wrap.setBackground(new GlassDrawable(Ui.dp(c, 18)));
         wrap.setGravity(Gravity.CENTER_VERTICAL);
         wrap.setClickable(true);
-        wrap.setOnClickListener(v -> {
-            if (themeRequest != null) themeRequest.onThemeRequest();
-        });
+        wrap.setOnClickListener(v -> SettingsActivity.open(c));
 
-        TextView glyph = Ui.bold(c, "◐", 16f, Ui.C_AMBER);
+        TextView glyph = Ui.bold(c, "⚙", 16f, Ui.C_AMBER);
         glyph.setGravity(Gravity.CENTER);
         glyph.setBackground(Ui.stroke(0x26F5B942, 0x59F5B942, Ui.dp(c, 20), 1));
         wrap.addView(glyph, Ui.lp(Ui.dp(c, 40), Ui.dp(c, 40)));
@@ -200,19 +190,12 @@ public class MinePage extends FrameLayout implements PullRefresh.Refreshable {
         tp.weight = 1f;
         tp.leftMargin = Ui.dp(c, 12);
         wrap.addView(texts, tp);
-        texts.addView(Ui.bold(c, "外观", 13.5f, Ui.C_TEXT));
-        TextView sub = Ui.text(c, "深浅色 · 液态玻璃观感", 10.5f, Ui.C_DIM);
+        texts.addView(Ui.bold(c, "设置", 13.5f, Ui.C_TEXT));
+        TextView sub = Ui.text(c, "外观 · 软件清理 · 检测更新", 10.5f, Ui.C_DIM);
         LinearLayout.LayoutParams sp = Ui.lp(ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         sp.topMargin = Ui.dp(c, 3);
         texts.addView(sub, sp);
-
-        TextView value = Ui.bold(c, Theme.label(Theme.mode()), 11.5f, Ui.C_AMBER);
-        value.setGravity(Gravity.CENTER);
-        value.setPadding(Ui.dp(c, 12), Ui.dp(c, 6), Ui.dp(c, 12), Ui.dp(c, 6));
-        value.setBackground(Ui.stroke(0x26F5B942, 0x4DF5B942, Ui.dp(c, 14), 1));
-        wrap.addView(value, Ui.lp(ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView arrow = Ui.text(c, "›", 15f, Ui.C_DIM);
         LinearLayout.LayoutParams ap = Ui.lp(ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -254,44 +237,6 @@ public class MinePage extends FrameLayout implements PullRefresh.Refreshable {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         ap.leftMargin = Ui.dp(c, 8);
         wrap.addView(arrow, ap);
-        return wrap;
-    }
-
-    /** 软件清理入口行：点击弹出下拉菜单（清理缓存 / 清理下载文件） */
-    private LinearLayout buildCleanRow(final Context c) {
-        LinearLayout wrap = Ui.row(c);
-        wrap.setMinimumHeight(Ui.dp(c, 62));
-        wrap.setPadding(Ui.dp(c, 12), Ui.dp(c, 10), Ui.dp(c, 14), Ui.dp(c, 10));
-        wrap.setBackground(new GlassDrawable(Ui.dp(c, 18)));
-        wrap.setGravity(Gravity.CENTER_VERTICAL);
-        wrap.setClickable(true);
-
-        TextView glyph = Ui.bold(c, "⌫", 15f, Ui.C_AMBER);
-        glyph.setGravity(Gravity.CENTER);
-        glyph.setBackground(Ui.stroke(0x26F5B942, 0x59F5B942, Ui.dp(c, 20), 1));
-        wrap.addView(glyph, Ui.lp(Ui.dp(c, 40), Ui.dp(c, 40)));
-
-        LinearLayout texts = Ui.col(c);
-        LinearLayout.LayoutParams tp = Ui.lp(0, ViewGroup.LayoutParams.WRAP_CONTENT);
-        tp.weight = 1f;
-        tp.leftMargin = Ui.dp(c, 12);
-        wrap.addView(texts, tp);
-        texts.addView(Ui.bold(c, "软件清理", 13.5f, Ui.C_TEXT));
-        TextView sub = Ui.text(c, "缓存 · 观看记录 · 下载文件", 10.5f, Ui.C_DIM);
-        LinearLayout.LayoutParams sp = Ui.lp(ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        sp.topMargin = Ui.dp(c, 3);
-        texts.addView(sub, sp);
-
-        TextView arrow = Ui.text(c, "›", 15f, Ui.C_DIM);
-        LinearLayout.LayoutParams ap = Ui.lp(ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        ap.leftMargin = Ui.dp(c, 8);
-        wrap.addView(arrow, ap);
-
-        wrap.setOnClickListener(v -> GlassMenu.show(wrap, GlassMenu.items(
-                new GlassMenu.Item("↺", "清理缓存", () -> CleanHelper.showClearCache(c)),
-                new GlassMenu.Item("⤓", "清理下载文件", () -> CleanHelper.showDownloads(c)))));
         return wrap;
     }
 

@@ -35,10 +35,17 @@ public final class GlassMenu {
 
         final PopupWindow[] pwRef = new PopupWindow[1];
 
+        // 和 Dock 同源的液态玻璃：GlassSurface 采样弹出位置背后那一小块页面，
+        // 做真实折射；PopupWindow 关闭后 view 被移除，onDetachedFromWindow 自动停采样。
+        GlassSurface surface = new GlassSurface(c, 18f,
+                Ui.darkGlass ? 0x8A121522 : 0xA6FFFFFF, 8f);
+        View root = anchor.getRootView();
+        if (root != null) surface.bind(root);
+
         LinearLayout col = Ui.col(c);
-        // 厚玻璃底：高不透明度，压在正文上也看得清选项
-        col.setBackground(Ui.liquidPanel(c, Ui.dp(c, 18)));
         col.setPadding(Ui.dp(c, 6), Ui.dp(c, 8), Ui.dp(c, 6), Ui.dp(c, 8));
+        surface.addView(col, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         for (final Item it : items) {
             LinearLayout row = Ui.row(c);
@@ -65,7 +72,7 @@ public final class GlassMenu {
                     ViewGroup.LayoutParams.WRAP_CONTENT));
         }
 
-        final PopupWindow pw = new PopupWindow(col, Ui.dp(c, 200),
+        final PopupWindow pw = new PopupWindow(surface, Ui.dp(c, 200),
                 ViewGroup.LayoutParams.WRAP_CONTENT, true);
         pwRef[0] = pw;
         pw.setBackgroundDrawable(new ColorDrawable(0));

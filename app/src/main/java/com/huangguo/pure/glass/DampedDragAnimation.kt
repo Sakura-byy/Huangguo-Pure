@@ -13,6 +13,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 
 /**
@@ -99,12 +100,10 @@ class DampedDragAnimation(
     fun release() {
         animationScope.launch {
             awaitFrame()
-            if (value != targetValue) {
-                val threshold = (valueRange.endInclusive - valueRange.start) * 0.025f
-                snapshotFlow { valueAnimation.value }
-                    .filter { abs(it - valueAnimation.targetValue) < threshold }
-                    .first()
-            }
+            // 不再等位移收敛：一律立刻缩回按压态。
+            // 原来要等 value 追上 targetValue，可拖动中途被打断、或切页让动画重启时，
+            // value 永远追不上，pressProgress 就停在 1，胶囊一直卡在越界放大状态。
+            // 位移和缩放本来就是两条曲线，早一百毫秒缩回看不出来。
             launch { pressProgressAnimation.animateTo(0f, pressProgressAnimationSpec) }
             launch { scaleXAnimation.animateTo(initialScale, scaleXAnimationSpec) }
             launch { scaleYAnimation.animateTo(initialScale, scaleYAnimationSpec) }
@@ -130,6 +129,20 @@ class DampedDragAnimation(
                     launch { velocityAnimation.animateTo(0f, velocityAnimationSpec) }
                 }
                 release()
+            }
+        }
+    }
+
+    /**
+     * 按住吸附：把指示器弹到目标位置，但**不释放按压态**。
+     *
+     * [animateToValue] 会在动画结束时 `release()`，放大与折射跟着缩回 —— 手指还在屏上时
+     * 那颗超出 Dock 边框的玻璃就没了。拖动 / 长按全程改用这个方法，按压态一直保持到抬手。
+     */
+    fun holdValue(value: Float) {
+        animationScope.launch {
+            mutatorMutex.mutate {
+                valueAnimation.animateTo(value.coerceIn(valueRange), valueAnimationSpec)
             }
         }
     }

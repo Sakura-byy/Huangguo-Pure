@@ -2,6 +2,7 @@ package com.huangguo.pure;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.text.TextUtils;
 import android.view.Gravity;
@@ -65,7 +66,7 @@ public class DetailActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         buildTopBar(root, content);
-        buildBottomBar(root);
+        buildBottomBar(root, sv);
 
         if (videoId <= 0) {
             content.addView(Ui.text(this, "缺少剧集参数", 13f, Ui.C_SUB));
@@ -92,11 +93,15 @@ public class DetailActivity extends AppCompatActivity {
         FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(
                 Ui.dp(this, 38), Ui.dp(this, 38), Gravity.TOP | Gravity.START);
         bp.leftMargin = Ui.dp(this, 14);
-        bp.topMargin = Ui.dp(this, 10);
+        // 顶栏返回键要落在状态栏下方，否则沉浸式一划出状态栏就压住按钮
+        int sbh;
+        int sbId = getResources().getIdentifier("status_bar_height", "dimen", "android");
+        sbh = sbId > 0 ? getResources().getDimensionPixelSize(sbId) : Ui.dp(this, 24);
+        bp.topMargin = Ui.dp(this, 10) + sbh;
         root.addView(backWrap, bp);
     }
 
-    private void buildBottomBar(FrameLayout root) {
+    private void buildBottomBar(FrameLayout root, View source) {
         bottomBar = Ui.col(this);
         bottomBar.setPadding(Ui.dp(this, 14), Ui.dp(this, 10), Ui.dp(this, 14), Ui.dp(this, 16));
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
@@ -105,8 +110,10 @@ public class DetailActivity extends AppCompatActivity {
 
         LinearLayout bar = Ui.row(this);
 
-        FrameLayout favWrap = new FrameLayout(this);
-        favWrap.setBackground(Ui.thickGlass(this, Ui.dp(this, 16)));
+        // 收藏 / 分享：和 Dock 同源的液态玻璃（采样自己背后那 50dp 的滚动内容）
+        GlassSurface favWrap = new GlassSurface(this, 16f,
+                Ui.darkGlass ? 0x8A121522 : 0xA6FFFFFF, 8f);
+        if (source != null) favWrap.bind(source);
         favWrap.setClickable(true);
         favBtn = new android.widget.ImageView(this);
         favBtn.setImageResource(R.drawable.ic_star);
@@ -120,8 +127,9 @@ public class DetailActivity extends AppCompatActivity {
         bar.addView(favWrap, Ui.lp(Ui.dp(this, 50), Ui.dp(this, 50)));
 
         // 分享按钮：复制本页在站点上的链接
-        FrameLayout shareWrap = new FrameLayout(this);
-        shareWrap.setBackground(Ui.thickGlass(this, Ui.dp(this, 16)));
+        GlassSurface shareWrap = new GlassSurface(this, 16f,
+                Ui.darkGlass ? 0x8A121522 : 0xA6FFFFFF, 8f);
+        if (source != null) shareWrap.bind(source);
         shareWrap.setClickable(true);
         ImageView shareIc = new ImageView(this);
         shareIc.setImageResource(R.drawable.ic_share);
@@ -377,5 +385,26 @@ public class DetailActivity extends AppCompatActivity {
 
     private void updatePlayLabel() {
         if (playLabel != null) playLabel.setText("立即播放 第 " + selectedEp + " 集");
+    }
+
+    /** 跟随系统模式下系统切深浅色：原地重建本页，不回主界面 */
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        boolean dark = Theme.isDark(this);
+        if (Theme.mode() == Theme.AUTO && dark != Ui.darkGlass) {
+            Ui.applyPalette(dark);
+            recreate();
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // 兜底：配置变化发生在后台时，回到前台再补一次
+        if (Ui.darkGlass != Theme.isDark(this)) {
+            Ui.applyPalette(Theme.isDark(this));
+            recreate();
+        }
     }
 }

@@ -12,9 +12,11 @@ android {
         applicationId 'com.huangguo.pure'
         minSdk 24
         targetSdk 36
-        versionCode 16
-        versionName '1.0.0'
+        versionCode 17
+        versionName '1.1.0'
         resConfigs 'zh', 'en'
+        // 只打 64 位：省掉 armeabi-v7a / x86 / x86_64 三套原生库与对齐填充
+        ndk { abiFilters 'arm64-v8a' }
     }
 
     signingConfigs {
@@ -79,7 +81,7 @@ dependencies {
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     implementation 'androidx.media3:media3-exoplayer:1.4.1'
     implementation 'androidx.media3:media3-exoplayer-hls:1.4.1'
-    implementation 'androidx.media3:media3-ui:1.4.1'
+    // media3-ui 未使用（播放控件全部自绘），去掉省一份 dex
 
     // 液态玻璃：Kyant0 Backdrop（Compose Multiplatform 制品，Android 变体映射到 androidx.compose）
     implementation 'io.github.kyant0:backdrop:1.0.6'

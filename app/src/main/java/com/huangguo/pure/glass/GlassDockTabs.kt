@@ -89,17 +89,20 @@ fun GlassDockTabs(
             modifier = Modifier.fillMaxSize()
         ) {
             labels.forEachIndexed { index, label ->
+                // 强调色跟指示器的实时位置走：拖动中越过半个 Tab 才换色，
+                // 手指把胶囊拖离当前页面时，原页面图标立即回到未选中态。
+                val isSelected = index == LocalLiquidBottomTabActiveSlot.current
                 LiquidBottomTab({ onSelect(index) }) {
                     TabIcon(
                         painter = painterResource(iconRes[index]),
                         contentDescription = label,
-                        tint = iconTint,
+                        tint = if (isSelected) accent else iconTint,
                         modifier = Modifier.size(22.dp)
                     )
                     BasicText(
                         text = label,
                         style = TextStyle(
-                            color = labelColor,
+                            color = if (isSelected) accent else labelColor,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Medium
                         )

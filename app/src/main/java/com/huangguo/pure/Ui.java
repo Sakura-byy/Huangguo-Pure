@@ -253,6 +253,31 @@ public final class Ui {
                 new android.graphics.drawable.Drawable[]{base, edge});
     }
 
+    /** 顶栏实色底：浅色近白、深色近墨 */
+    public static int headerSolid() {
+        return darkGlass ? 0xFF0B1018 : 0xFFF7F8FC;
+    }
+
+    /** 顶栏底部 1px 分隔线 */
+    public static int headerLine() {
+        return darkGlass ? 0x1FFFFFFF : 0x141A2332;
+    }
+
+    /**
+     * 顶栏渐变玻璃膜：顶部实、向下渐隐到全透明，压住滚动内容但不像实心条。
+     * 用多段渐变而不是两段，肉眼才不会在过渡处看到一条「截断线」。
+     */
+    public static android.graphics.drawable.Drawable headerVeil(Context c) {
+        android.graphics.drawable.GradientDrawable g =
+                new android.graphics.drawable.GradientDrawable(
+                        android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                        darkGlass
+                                ? new int[]{0xA60B1018, 0x9A0B1018, 0x7A0B1018, 0x400B1018, 0x000B1018}
+                                : new int[]{0xA6FFFFFF, 0x9AFFFFFF, 0x7AFFFFFF, 0x40FFFFFF, 0x00FFFFFF});
+        g.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+        return g;
+    }
+
     /** 玩家 seek 进度色 / 按钮高亮 */
     public static int accentBright() {
         return darkGlass ? 0xFFF5B942 : 0xFFB8860B;

@@ -3,6 +3,7 @@ package com.huangguo.pure;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -22,22 +23,22 @@ import androidx.core.view.WindowInsetsCompat;
 
 /**
  * 主壳：极光背景 + Liquid Glass Dock + 四个页面 + 常驻右上角搜索。
- * 专题与博客并进「分类」页，Dock 只留 首页 / 分类 / 排行 / 我的。
+ * 专题与博客并进「发现」页，Dock 只留 首页 / 发现 / 排行 / 我的。
  */
 public class MainActivity extends AppCompatActivity {
 
-    private static final String[] LABELS = {"首页", "分类", "排行", "我的"};
-    private static final int[] ICONS = {R.drawable.ic_home, R.drawable.ic_grid,
+    private static final String[] LABELS = {"首页", "发现", "排行", "我的"};
+    private static final int[] ICONS = {R.drawable.ic_home, R.drawable.ic_discover,
             R.drawable.ic_rank, R.drawable.ic_user};
 
     private FrameLayout root;
     private FrameLayout container;
+    private SwipeFrame pageSwipe;
     private FrameLayout pageHost;
     private FrameLayout navWrap;
     private androidx.compose.ui.platform.ComposeView dockView;
     private com.huangguo.pure.glass.DockState dockState;
     private DockBackdrop dockBackdrop;
-    private FrameLayout searchFab;
     private FrameLayout searchLayer;
     private boolean searchOpen = false;
     private int insetTop = 0;
@@ -51,18 +52,52 @@ public class MainActivity extends AppCompatActivity {
     /** 任何触摸都让玻璃采样进全速档：滚动列表时折射逐帧跟手，松手后自动退避 */
     @Override
     public boolean dispatchTouchEvent(MotionEvent ev) {
-        // 采样放到下一帧，别在触摸分发路径里做软件绘制，否则 tap 会被主线程阻塞吃掉
-        if (dockBackdrop != null && dockView != null && !backdropPokeScheduled) {
-            backdropPokeScheduled = true;
-            dockView.postDelayed(() -> {
-                backdropPokeScheduled = false;
-                if (dockBackdrop != null) dockBackdrop.poke();
-            }, 120);
+        // 抬手之后还有惯性滑行，手指已经离开屏幕、不再有 MOVE 事件。
+        // 只在触摸期间采样的话，一次大力滑动后玻璃里的背景就定格在抬手那一刻 ——
+        // 所以抬手后再续一段「逐帧采样」，覆盖惯性滑行直到画面停住。
+        switch (ev.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+            case MotionEvent.ACTION_MOVE:
+                kickPulse(120L);
+                break;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                kickPulse(2200L);
+                break;
+            default:
+                break;
         }
         return super.dispatchTouchEvent(ev);
     }
 
-    private boolean backdropPokeScheduled = false;
+    /** 逐帧采样窗口的截止时间（uptimeMillis） */
+    private long pulseUntil;
+    private boolean pulseRunning;
+
+    private final Runnable pulse = new Runnable() {
+        @Override
+        public void run() {
+            if (dockBackdrop == null || dockView == null) {
+                pulseRunning = false;
+                return;
+            }
+            dockBackdrop.poke();
+            if (SystemClock.uptimeMillis() < pulseUntil) {
+                dockView.postOnAnimation(this);
+            } else {
+                pulseRunning = false;
+            }
+        }
+    };
+
+    /** 打开一段逐帧采样窗口；重复调用只延长截止时间，不会叠出多个循环 */
+    private void kickPulse(long ms) {
+        pulseUntil = Math.max(pulseUntil, SystemClock.uptimeMillis() + ms);
+        if (!pulseRunning && dockView != null) {
+            pulseRunning = true;
+            dockView.postOnAnimation(pulse);
+        }
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -92,13 +127,22 @@ public class MainActivity extends AppCompatActivity {
         // container 自己带一层极光，Dock 采样它才有颜色可折射
         container.addView(new Aurora(this), new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        pageHost = new FrameLayout(this);
-        pageHost.setClipChildren(false);
-        container.addView(pageHost, new FrameLayout.LayoutParams(
+        // 一级页容器外面再套一层横滑：首页/发现/排行/我的之间可以直接左右划过去。
+        // 起手点落在二级 SwipeFrame 上时让位给子层（发现的 剧集/专题/博客 等），
+        // 子层滑到边界自己会回调 selectPrimary。
+        pageSwipe = new SwipeFrame(this);
+        pageSwipe.deferToInnerSwipe(true);
+        pageSwipe.setOnSwipe(dir -> {
+            int target = current + dir;
+            if (target >= 0 && target < pages.length) select(target);
+        });
+        container.addView(pageSwipe, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        buildSearchFab();
-        root.addView(searchFab, fabParams(0));
+        pageHost = new FrameLayout(this);
+        pageHost.setClipChildren(false);
+        pageSwipe.addView(pageHost, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         navWrap = new FrameLayout(this);
         navWrap.setClipChildren(false);
@@ -115,17 +159,30 @@ public class MainActivity extends AppCompatActivity {
                 Insets sys = insets.getInsets(WindowInsetsCompat.Type.systemBars());
                 insetTop = sys.top;
                 insetBottom = sys.bottom;
-                container.setPadding(0, sys.top, 0, 0);
+                // 不再给 container 让状态栏：每个页面的顶栏本身覆盖到状态栏顶端，
+                // 上面那一块由液态玻璃填满，页面内容从顶栏下沿开始。
+                container.setPadding(0, 0, 0, 0);
                 navWrap.setPadding(0, 0, 0, Math.max(sys.bottom, Ui.dp(MainActivity.this, 8)));
-                FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) searchFab.getLayoutParams();
-                lp.topMargin = sys.top + Ui.dp(MainActivity.this, 9);
-                searchFab.setLayoutParams(lp);
                 if (searchLayer != null) searchLayer.setPadding(0, sys.top, 0, 0);
                 return insets;
             }
         });
 
-        select(0);
+        // 恢复到离开时的 tab：跟随系统切换深浅色时 recreate 重建，
+        // 不带恢复就会落回首页，看起来像「跳回主页」
+        int savedTab = 0;
+        if (savedInstanceState != null) {
+            savedTab = savedInstanceState.getInt("hg.tab", 0);
+        }
+        if (savedTab < 0 || savedTab >= LABELS.length) savedTab = 0;
+        select(savedTab);
+
+        // 首帧后再补采样：页面内容是网络异步回来的，第一次布局时还没有图，
+        // 玻璃会记住那张「空底」位图 —— 表现就是刚进 App 时 tab 栏是纯色，划一下才变。
+        dockView.post(() -> kickPulse(3000L));
+
+        // 每天第一次启动检查更新（设置里的开关关掉就不跑）
+        Update.checkDaily(this);
 
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
@@ -141,32 +198,6 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
-    private FrameLayout.LayoutParams fabParams(int topMargin) {
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                Ui.dp(this, 40), Ui.dp(this, 40));
-        lp.gravity = Gravity.TOP | Gravity.END;
-        lp.topMargin = topMargin;
-        lp.rightMargin = Ui.dp(this, 14);
-        return lp;
-    }
-
-    private void buildSearchFab() {
-        // 液态玻璃搜索键：浅色白玻璃+墨边，深色深玻璃+白边，避免采样背景把它染深
-        searchFab = new FrameLayout(this);
-        searchFab.setBackground(Ui.darkGlass
-                ? new GlassDrawable(Ui.dp(this, 20), 0x9A1C2333, 0x8A0A0E15,
-                        0x900A0E15, 0x66FFFFFF)
-                : new GlassDrawable(Ui.dp(this, 20), 0xF5FFFFFF, 0xEFF3F8FD,
-                        0xE8EDF4, 0x591A2332));
-        ImageView ic = new ImageView(this);
-        ic.setImageResource(R.drawable.ic_search);
-        ic.setColorFilter(Ui.C_TEXT);
-        searchFab.addView(ic, new FrameLayout.LayoutParams(
-                Ui.dp(this, 19), Ui.dp(this, 19), Gravity.CENTER));
-        searchFab.setClickable(true);
-        searchFab.setOnClickListener(v -> openSearch());
-    }
-
     private void buildNav() {
         // 液态玻璃 Dock：Java 壳体（ComposeView）+ 官方 backdrop 库的 Compose 玻璃栏
         dockView = new androidx.compose.ui.platform.ComposeView(this);
@@ -175,11 +206,17 @@ public class MainActivity extends AppCompatActivity {
         dockBackdrop = new DockBackdrop();
         dockBackdrop.setSource(container);
 
+        // view 高度 = 栏体 64dp + 上下各 14dp 溢出余量。
+        // 按压时指示器放大到 78dp，上下各越出栏体 7dp；高光、阴影再外扩几像素。
+        // 这些越界部分必须落在 view 之内，否则被 Android 的绘制边界裁掉 ——
+        // 表现就是「胶囊只往下超出、顶部被切平」。
+        int barH = Ui.dp(this, 64);
+        int overflow = Ui.dp(this, 14);
         FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 64));
+                ViewGroup.LayoutParams.MATCH_PARENT, barH + overflow * 2);
         blp.leftMargin = Ui.dp(this, 18);
         blp.rightMargin = Ui.dp(this, 18);
-        blp.bottomMargin = Ui.dp(this, 10);
+        blp.bottomMargin = 0;
         navWrap.addView(dockView, blp);
 
         dockBackdrop.setTarget(dockView);
@@ -199,7 +236,7 @@ public class MainActivity extends AppCompatActivity {
         dockState.setLight(!Ui.darkGlass);
         dockState.setIconTint(Ui.C_TEXT);
         dockState.setLabelColor(Ui.C_TEXT);
-        dockState.setAccent(Ui.darkGlass ? 0xFF0091FF : 0xFF0088FF);
+        dockState.setAccent(Ui.accent());
     }
 
     /** 供子页面在自身二级/三级滑到边界时请求切换一级页 */
@@ -225,7 +262,7 @@ public class MainActivity extends AppCompatActivity {
         if (pages[idx] == null) {
             switch (idx) {
                 case 0:
-                    pages[idx] = new HomePage(this, () -> select(1));
+                    pages[idx] = new HomePage(this, () -> select(1), this::openSearch);
                     break;
                 case 1:
                     pages[idx] = new CategoryPage(this);
@@ -253,9 +290,12 @@ public class MainActivity extends AppCompatActivity {
         pageHost.removeAllViews();
         pageHost.addView(wrappers[idx], new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        if (searchFab != null && !searchOpen) searchFab.setVisibility(View.VISIBLE);
-        // 换页后立刻重采一次玻璃背景，否则 Dock 里还留着上一页的折影像
-        if (dockBackdrop != null) pageHost.post(() -> dockBackdrop.refresh());
+        // 换页后立刻重采一次玻璃背景，否则 Dock 里还留着上一页的折影像；
+        // 再续 1.5s 逐帧采样，等封面 / 列表在这段时间里陆续到位
+        if (dockBackdrop != null) {
+            pageHost.post(() -> dockBackdrop.refresh());
+            kickPulse(1500L);
+        }
     }
 
     // ------------------------------------------------------------------ 主题
@@ -266,6 +306,13 @@ public class MainActivity extends AppCompatActivity {
         // 浅色主题下状态栏底是亮的，图标要变深色才看得见
         ic.setAppearanceLightStatusBars(!Ui.darkGlass);
         ic.setAppearanceLightNavigationBars(!Ui.darkGlass);
+    }
+
+    /** 重建时记住当前 tab，避免跟随系统切换深浅色后落回首页 */
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putInt("hg.tab", Math.max(0, current));
     }
 
     /** 跟随系统模式下，系统切深浅色时重建整个 UI */
@@ -386,7 +433,6 @@ public class MainActivity extends AppCompatActivity {
         searchLayer.setAlpha(0f);
         searchLayer.setTranslationY(Ui.dp(this, 16));
         searchLayer.animate().alpha(1f).translationY(0f).setDuration(200).start();
-        searchFab.setVisibility(View.INVISIBLE);
     }
 
     private void addLayer(View layer) {
@@ -411,12 +457,17 @@ public class MainActivity extends AppCompatActivity {
         searchOpen = false;
         searchLayer.animate().alpha(0f).translationY(Ui.dp(this, 16)).setDuration(170)
                 .withEndAction(() -> searchLayer.setVisibility(View.GONE)).start();
-        searchFab.setVisibility(View.VISIBLE);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        // 设置页改过外观：静态调色板已经换了，但这一屏的控件还是旧色，整页重建一次
+        if (Ui.darkGlass != Theme.isDark(this)) {
+            recreate();
+            return;
+        }
+        kickPulse(900L);
         int idx = current;
         if (idx >= 0 && idx < pages.length && pages[idx] instanceof MinePage) {
             ((MinePage) pages[idx]).refresh();

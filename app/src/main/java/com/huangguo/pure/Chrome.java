@@ -12,15 +12,14 @@ public final class Chrome {
     private Chrome() {
     }
 
-    /** 顶栏：只留标题（chip 参数保留兼容旧调用，橙黄横幅已按要求去掉） */
-    public static LinearLayout titleBar(Context c, String title, String chip) {
-        LinearLayout bar = Ui.row(c);
-        bar.setPadding(Ui.dp(c, 18), Ui.dp(c, 8), Ui.dp(c, 18), Ui.dp(c, 8));
-        bar.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, Ui.dp(c, 54)));
-
+    /**
+     * 顶栏：整块就是液态玻璃（自己采样、自己折射），不再叠纯色或渐变膜。
+     * 返回的是玻璃本体，`row()` 里可以继续追加右侧控件。
+     */
+    public static GlassHeader titleBar(Context c, String title, String chip) {
+        GlassHeader bar = new GlassHeader(c);
         TextView logo = Ui.bold(c, title, 20f, Ui.C_TEXT);
-        bar.addView(logo);
+        bar.row().addView(logo);
         return bar;
     }
 

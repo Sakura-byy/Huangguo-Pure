@@ -25,13 +25,30 @@ import okhttp3.Response;
  */
 public final class Mirror {
 
-    /** 发布页（GitHub Pages） */
+    /**
+     * 发布页源，按优先级排：
+     *   1) GitHub Pages 主站
+     *   2) GitLab 镜像（主站被墙时的第一备份）
+     *   3) Cloudflare Pages 两个备用域
+     *   4) raw.githubusercontent（最后兜底，JSON/JS 原文直出）
+     * 任一源拿到 ≥3 条内容站就停，避免每次都把四个源全打一遍。
+     */
     private static final String[] PUBLISH_PAGES = {
             "https://huangguotv.github.io/publish.js",
-            "https://raw.githubusercontent.com/huangguotv/huangguotv.github.io/main/publish.js",
+            "https://gitlab.com/huangguotv/publish/-/raw/main/publish.js",
+            "https://gitlab.com/huangguotv/huangguotv/-/raw/main/publish.js",
+            "https://huang-guo.pages.dev/publish.js",
             "https://huangguo88.pages.dev/publish.js",
-            "https://huang-guo.pages.dev/publish.js"
+            "https://raw.githubusercontent.com/huangguotv/huangguotv.github.io/main/publish.js"
     };
+
+    /** 测速超时：发布页给的线路大多在海外，4s 足够判断死活 */
+    private static final okhttp3.OkHttpClient PROBE =
+            new okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(4, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(4, java.util.concurrent.TimeUnit.SECONDS)
+                    .followRedirects(true)
+                    .build();
 
     private static final Pattern URL_FIELD = Pattern.compile("url://s*'([^']+)'");
     private static final Pattern HOST_ONLY = Pattern.compile("^(https?://[A-Za-z0-9._-]+)");
@@ -74,6 +91,89 @@ public final class Mirror {
             if (!out.contains(host)) out.add(host);
         }
         return out;
+    }
+
+    /** 一条线路：地址 + 延迟（-1 表示不可达） */
+    public static class Line {
+        public final String url;
+        public final int ms;
+
+        public Line(String url, int ms) {
+            this.url = url;
+            this.ms = ms;
+        }
+
+        public String host() {
+            return url.replaceFirst("^https?://", "");
+        }
+    }
+
+    /** 抓发布页 + 并发测速，按延迟升序；不可达的排最后 */
+    public static List<Line> fetchRanked() {
+        List<String> hosts = fetch();
+        List<String> all = new ArrayList<>(hosts);
+        for (String b : Api.builtinHosts()) if (!all.contains(b)) all.add(b);
+        return rank(probe(all));
+    }
+
+    /** 并发测速（最多 6 路） */
+    public static List<Line> probe(List<String> hosts) {
+        List<Line> out = new java.util.ArrayList<>();
+        if (hosts == null || hosts.isEmpty()) return out;
+        int n = Math.min(6, hosts.size());
+        java.util.concurrent.ExecutorService pool =
+                java.util.concurrent.Executors.newFixedThreadPool(n);
+        List<java.util.concurrent.Future<Line>> futures = new ArrayList<>();
+        for (final String h : hosts) {
+            futures.add(pool.submit(() -> new Line(h, ping(h))));
+        }
+        pool.shutdown();
+        for (java.util.concurrent.Future<Line> f : futures) {
+            try {
+                out.add(f.get(6, java.util.concurrent.TimeUnit.SECONDS));
+            } catch (Exception ignored) {
+            }
+        }
+        return out;
+    }
+
+    /** 按延迟排序：可达的在前（小的优先），不可达的按原序垫底 */
+    public static List<Line> rank(List<Line> lines) {
+        List<Line> out = new ArrayList<>();
+        if (lines == null) return out;
+        List<Line> ok = new ArrayList<>();
+        List<Line> bad = new ArrayList<>();
+        for (Line l : lines) {
+            if (l == null) continue;
+            if (l.ms >= 0) ok.add(l);
+            else bad.add(l);
+        }
+        ok.sort((a, b) -> Integer.compare(a.ms, b.ms));
+        out.addAll(ok);
+        out.addAll(bad);
+        return out;
+    }
+
+    /** 单条线路往返耗时（ms），失败返回 -1；请求根路径拿首字节时间 */
+    public static int ping(String base) {
+        if (base == null || base.isEmpty()) return -1;
+        String url = base.endsWith("/") ? base : base + "/";
+        long t0 = System.currentTimeMillis();
+        okhttp3.Response resp = null;
+        try {
+            Request req = new Request.Builder()
+                    .url(url)
+                    .header("User-Agent", Api.UA)
+                    .header("Accept", "text/html,*/*")
+                    .build();
+            resp = PROBE.newCall(req).execute();
+            if (!resp.isSuccessful()) return -1;
+            return (int) Math.max(1L, System.currentTimeMillis() - t0);
+        } catch (Exception e) {
+            return -1;
+        } finally {
+            if (resp != null) resp.close();
+        }
     }
 
     private static String read(String url) {

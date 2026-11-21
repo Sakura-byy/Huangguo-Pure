@@ -2,6 +2,7 @@ package com.huangguo.pure;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.Gravity;
@@ -88,7 +89,9 @@ public class TopicActivity extends AppCompatActivity {
 
     private void buildTopBar(LinearLayout content) {
         LinearLayout bar = Ui.row(this);
-        bar.setPadding(Ui.dp(this, 14), Ui.dp(this, 10), Ui.dp(this, 14), Ui.dp(this, 6));
+        // 返回键/标题要落在状态栏下方，否则沉浸式直接压住状态栏时钟
+        bar.setPadding(Ui.dp(this, 14), Ui.dp(this, 10) + GlassHeader.statusBarHeight(this),
+                Ui.dp(this, 14), Ui.dp(this, 6));
 
         FrameLayout backWrap = new FrameLayout(this);
         backWrap.setBackground(new GlassDrawable(Ui.dp(this, 20)));
@@ -236,5 +239,26 @@ public class TopicActivity extends AppCompatActivity {
 
     private void paintFav() {
         // 更多键恒为 ic_more；收藏状态在更多菜单里体现，不再把更多键换成星形
+    }
+
+    /** 跟随系统模式下系统切深浅色：原地重建本页，不回主界面 */
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        boolean dark = Theme.isDark(this);
+        if (Theme.mode() == Theme.AUTO && dark != Ui.darkGlass) {
+            Ui.applyPalette(dark);
+            recreate();
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // 兼底：配置变化发生在后台时，回到前台再补一次
+        if (Ui.darkGlass != Theme.isDark(this)) {
+            Ui.applyPalette(Theme.isDark(this));
+            recreate();
+        }
     }
 }

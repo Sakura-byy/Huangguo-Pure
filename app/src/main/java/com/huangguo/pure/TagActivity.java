@@ -2,6 +2,7 @@ package com.huangguo.pure;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -76,10 +77,13 @@ public class TagActivity extends AppCompatActivity {
 
     private void buildTop(LinearLayout page, View backdrop) {
         LinearLayout bar = Ui.row(this);
-        bar.setPadding(Ui.dp(this, 14), Ui.dp(this, 10), Ui.dp(this, 14), Ui.dp(this, 6));
+        bar.setPadding(Ui.dp(this, 14), Ui.dp(this, 10) + GlassHeader.statusBarHeight(this),
+                Ui.dp(this, 14), Ui.dp(this, 6));
 
         final FrameLayout back = new FrameLayout(this);
-        GlassSurface gs = new GlassSurface(this, 20, 0x4D0A0E15, 9);
+        // tint 随主题：深色给暗底，浅色给亮底，别让返回键在浅色下变成灰黑圆
+        GlassSurface gs = new GlassSurface(this, 20,
+                Ui.darkGlass ? 0x66121A2A : 0x99FFFFFF, 9);
         gs.bind(backdrop);
         back.addView(gs, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -112,5 +116,26 @@ public class TagActivity extends AppCompatActivity {
     protected void onDestroy() {
         ui.removeCallbacksAndMessages(null);
         super.onDestroy();
+    }
+
+    /** 跟随系统模式下系统切深浅色：原地重建本页，不回主界面 */
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        boolean dark = Theme.isDark(this);
+        if (Theme.mode() == Theme.AUTO && dark != Ui.darkGlass) {
+            Ui.applyPalette(dark);
+            recreate();
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // 兼底：配置变化发生在后台时，回到前台再补一次
+        if (Ui.darkGlass != Theme.isDark(this)) {
+            Ui.applyPalette(Theme.isDark(this));
+            recreate();
+        }
     }
 }

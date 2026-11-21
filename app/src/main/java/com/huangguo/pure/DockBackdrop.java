@@ -19,10 +19,13 @@ import android.view.View;
  */
 public final class DockBackdrop {
 
-    /** 采样降采样倍数：2 倍即已在 Compose 侧被双线性放大一次，再叠 blur(8dp) 刚好 */
-    private static final int DS = 2;
-    /** 采样最短间隔（ms）：一次滑动一帧多次回调时不重复画 */
-    private static final long MIN_INTERVAL_NS = 8_000_000L;
+    /**
+     * 采样降采样倍数。玻璃自身叠了 blur(8dp) + vibrancy，3 倍降采样再双线性放大
+     * 看不出差别，但软件重绘的像素面积只有 2 倍时的 44%，主线程压力直接砍一半。
+     */
+    private static final int DS = 3;
+    /** 采样最短间隔：对齐 60Hz 一个 vsync，一次滑动里同一帧不重复重绘 */
+    private static final long MIN_INTERVAL_NS = 16_000_000L;
 
     private final Backdrop.RegionSampler sampler = new Backdrop.RegionSampler();
     private final Rect region = new Rect();
@@ -81,7 +84,11 @@ public final class DockBackdrop {
         if (w <= 0 || h <= 0) return;
         if (!source.isAttachedToWindow() || !target.isAttachedToWindow()) return;
         long now = System.nanoTime();
-        if (!force && now - lastSampleNs < MIN_INTERVAL_NS) return;
+        // 自适应节流：上一帧采样花了多久，就至少隔两倍时间再来一次。
+        // 固定 16ms 在页面图文多的时候会连续占满主线程，手感就「不跟手」了。
+        long costNs = sampler.lastCostMs() * 1_000_000L;
+        long minGap = Math.max(MIN_INTERVAL_NS, costNs * 2L);
+        if (!force && now - lastSampleNs < minGap) return;
         lastSampleNs = now;
 
         target.getLocationInWindow(targetLoc);

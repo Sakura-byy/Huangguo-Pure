@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 分类页：顶部分段在「剧集 / 专题 / 博客」之间切换。
+ * 发现页：顶部分段在「剧集 / 专题 / 博客」之间切换。
  *
  * 站点 /api/site/categories/video 里有两条分类（AI魔改、AI换脸）的列表接口
  * 直接返回 {"data":[],"status":0,"msg":"内容已下线"}，所以按 route 过滤掉，
@@ -54,7 +54,7 @@ public class CategoryPage extends FrameLayout {
         addView(root, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        root.addView(Chrome.titleBar(c, "分类", "短剧 · 漫剧"));
+        root.addView(Chrome.titleBar(c, "发现", "短剧 · 漫剧"));
 
         FrameLayout segWrap = new FrameLayout(c);
         segWrap.setClipChildren(false);

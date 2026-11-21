@@ -2,6 +2,7 @@ package com.huangguo.pure;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -64,6 +65,8 @@ public class PostActivity extends AppCompatActivity {
     private boolean commentsBuilt = false;
     private boolean fav = false;
     private FrameLayout favBtn;
+    /** 顶栏高度：滚动内容要让出这么多，否则第一行会被玻璃压住 */
+    private int headerHeight;
     private final Map<Integer, String> videoUrls = new HashMap<>();
 
     @Override
@@ -84,12 +87,14 @@ public class PostActivity extends AppCompatActivity {
         root.addView(page, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-        buildTopBar(page, root);
+        buildTopBar(root);
 
         ScrollView sv = new ScrollView(this);
         sv.setFillViewport(true);
         LinearLayout.LayoutParams svp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT, 0);
         svp.weight = 1f;
+        // 顶栏是覆盖在页面上的玻璃条，正文要让出它的高度
+        svp.topMargin = headerHeight;
         page.addView(sv, svp);
 
         LinearLayout body = Ui.col(this);
@@ -124,14 +129,26 @@ public class PostActivity extends AppCompatActivity {
         loadPlayback();
     }
 
-    private void buildTopBar(LinearLayout page, View backdrop) {
+    /** 状态栏高度：优先取系统资源，取不到用 24dp 兜底 */
+    private int statusBarHeight() {
+        int id = getResources().getIdentifier("status_bar_height", "dimen", "android");
+        if (id > 0) {
+            int h = getResources().getDimensionPixelSize(id);
+            if (h > 0) return h;
+        }
+        return Ui.dp(this, 24);
+    }
+
+    private void buildTopBar(FrameLayout root) {
         LinearLayout bar = Ui.row(this);
-        bar.setPadding(Ui.dp(this, 14), Ui.dp(this, 10), Ui.dp(this, 14), Ui.dp(this, 6));
+        // 顶栏与返回键都要落在状态栏下方，否则沉浸式一划出状态栏就压住按钮
+        bar.setPadding(Ui.dp(this, 14), Ui.dp(this, 10) + statusBarHeight(),
+                Ui.dp(this, 14), Ui.dp(this, 6));
 
         // 返回键占位（实际按钮钉在 root 顶层，见下方 pinBackToRoot）
         View backSpacer = new View(this);
         bar.addView(backSpacer, Ui.lp(Ui.dp(this, 38), Ui.dp(this, 38)));
-        pinBackToRoot((FrameLayout) backdrop);
+        pinBackToRoot(root);
 
         TextView tag = Ui.text(this, "博客", 9.5f, Ui.C_AMBER);
         tag.setGravity(Gravity.CENTER);
@@ -142,11 +159,11 @@ public class PostActivity extends AppCompatActivity {
         tp.leftMargin = Ui.dp(this, 12);
         bar.addView(tag, tp);
 
-        TextView tip = Ui.text(this, "含视频与评论", 10f, Ui.C_DIM);
-        LinearLayout.LayoutParams tipLp = Ui.lp(0, ViewGroup.LayoutParams.WRAP_CONTENT);
-        tipLp.weight = 1f;
-        tip.setGravity(Gravity.END);
-        bar.addView(tip, tipLp);
+        // 中间的弹性空位：把更多键推到最右（原来这里是一行「含视频与评论」小字，已删）
+        View gap = new View(this);
+        LinearLayout.LayoutParams gapLp = Ui.lp(0, ViewGroup.LayoutParams.WRAP_CONTENT);
+        gapLp.weight = 1f;
+        bar.addView(gap, gapLp);
 
         // 更多按钮：下拉玻璃菜单（收藏 / 分享）
         favBtn = new FrameLayout(this);
@@ -164,7 +181,13 @@ public class PostActivity extends AppCompatActivity {
         bar.addView(favBtn, fp);
         fav = Store.get(this).isFavorite(Store.T_POST, postId);
 
-        page.addView(bar);
+        // 钉在 root 顶层、高度写死：放进页面的竖向 LinearLayout 里，
+        // wrap_content 会被父级量成整屏高，图标直接被居中到屏幕中间。
+        int barH = Ui.dp(this, 10) + statusBarHeight() + Ui.dp(this, 38) + Ui.dp(this, 6);
+        FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, barH, Gravity.TOP);
+        root.addView(bar, blp);
+        headerHeight = barH;
     }
 
     /** 返回键钉在 root 顶层（Gravity.TOP|START），不随 ScrollView 内容滚动而消失 */
@@ -181,7 +204,7 @@ public class PostActivity extends AppCompatActivity {
         FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(
                 Ui.dp(this, 38), Ui.dp(this, 38), Gravity.TOP | Gravity.START);
         bp.leftMargin = Ui.dp(this, 14);
-        bp.topMargin = Ui.dp(this, 10);
+        bp.topMargin = Ui.dp(this, 10) + statusBarHeight();
         root.addView(back, bp);
     }
 
@@ -421,16 +444,6 @@ public class PostActivity extends AppCompatActivity {
         card.addView(btn, new FrameLayout.LayoutParams(
                 Ui.dp(this, 60), Ui.dp(this, 60), Gravity.CENTER));
 
-        String label = url != null ? ("播放视频 " + (index + 1) + " · 与短剧共用播放器")
-                : (playbackLoaded ? "视频暂不可用" : "视频加载中…");
-        TextView tip = Ui.text(this, label, 11f, Ui.bodyText());
-        tip.setGravity(Gravity.CENTER);
-        FrameLayout.LayoutParams tlp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        tlp.gravity = Gravity.BOTTOM;
-        tlp.bottomMargin = Ui.dp(this, 10);
-        card.addView(tip, tlp);
-
         card.setOnClickListener(v -> {
             if (url == null) {
                 Toast.makeText(this, playbackLoaded ? "这条视频暂不可用" : "还在取地址…",
@@ -440,11 +453,25 @@ public class PostActivity extends AppCompatActivity {
             PlayerActivity.openStream(this, url, title, coverUrl);
         });
 
-        LinearLayout.LayoutParams blp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
-                Math.round(getResources().getDisplayMetrics().widthPixels * 9f / 16f));
-        blp.bottomMargin = Ui.dp(this, 14);
-        card.setLayoutParams(blp);
-        return card;
+        // 提示文字放到卡片外面：原来贴在卡片底部，字压在视频画面下沿，
+        // 暂停帧和文字叠在一起看不清。改成卡片下方独立一行说明。
+        LinearLayout wrap = Ui.col(this);
+        int cardH = Math.round(getResources().getDisplayMetrics().widthPixels * 9f / 16f);
+        wrap.addView(card, Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT, cardH));
+
+        String label = url != null ? ("播放视频 " + (index + 1) + " · 与短剧共用播放器")
+                : (playbackLoaded ? "视频暂不可用" : "视频加载中…");
+        TextView tip = Ui.text(this, label, 11f, 0xFF37455C);
+        LinearLayout.LayoutParams tlp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        tlp.topMargin = Ui.dp(this, 7);
+        wrap.addView(tip, tlp);
+
+        LinearLayout.LayoutParams wlp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        wlp.bottomMargin = Ui.dp(this, 14);
+        wrap.setLayoutParams(wlp);
+        return wrap;
     }
 
     private View line(int bottomMargin) {
@@ -485,5 +512,26 @@ public class PostActivity extends AppCompatActivity {
     private static String firstChar(String s) {
         if (s == null || s.isEmpty()) return "·";
         return s.substring(0, 1);
+    }
+
+    /** 跟随系统模式下系统切深浅色：原地重建本页，不回主界面 */
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        boolean dark = Theme.isDark(this);
+        if (Theme.mode() == Theme.AUTO && dark != Ui.darkGlass) {
+            Ui.applyPalette(dark);
+            recreate();
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // 兜底：配置变化发生在后台时，回到前台再补一次
+        if (Ui.darkGlass != Theme.isDark(this)) {
+            Ui.applyPalette(Theme.isDark(this));
+            recreate();
+        }
     }
 }

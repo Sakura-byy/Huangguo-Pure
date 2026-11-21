@@ -31,6 +31,13 @@ public class SwipeFrame extends FrameLayout {
 
     private OnSwipe swipe;
 
+    /**
+     * true 时：起手点落在嵌套的 SwipeFrame 上就把整次手势让给子层，
+     * 由子层在自己的边界上回调切一级页。用于「一级页容器」这一层，
+     * 否则外层会把分类/排行里二级、三级的横滑全吃掉。
+     */
+    private boolean deferToInner;
+
     private float downX, downY;
     private boolean intercepting;
     private boolean blocked;
@@ -43,6 +50,11 @@ public class SwipeFrame extends FrameLayout {
         swipe = s;
     }
 
+    public SwipeFrame deferToInnerSwipe(boolean v) {
+        deferToInner = v;
+        return this;
+    }
+
     @Override
     public boolean onInterceptTouchEvent(MotionEvent ev) {
         switch (ev.getActionMasked()) {
@@ -50,7 +62,8 @@ public class SwipeFrame extends FrameLayout {
                 downX = ev.getX();
                 downY = ev.getY();
                 intercepting = false;
-                blocked = hasHorizontalScroller(this, ev.getX(), ev.getY());
+                blocked = hasHorizontalScroller(this, ev.getX(), ev.getY())
+                        || (deferToInner && hasInnerSwipe(this, ev.getX(), ev.getY()));
                 break;
 
             case MotionEvent.ACTION_MOVE: {
@@ -109,6 +122,20 @@ public class SwipeFrame extends FrameLayout {
             default:
                 return true;
         }
+    }
+
+    /** 递归找起手点下方有没有嵌套的 SwipeFrame（二级/三级横滑容器） */
+    private boolean hasInnerSwipe(ViewGroup parent, float px, float py) {
+        for (int i = parent.getChildCount() - 1; i >= 0; i--) {
+            View ch = parent.getChildAt(i);
+            if (ch.getVisibility() != VISIBLE) continue;
+            float cx = px - ch.getLeft() - ch.getTranslationX();
+            float cy = py - ch.getTop() - ch.getTranslationY();
+            if (cx < 0f || cy < 0f || cx > ch.getWidth() || cy > ch.getHeight()) continue;
+            if (ch instanceof SwipeFrame) return true;
+            if (ch instanceof ViewGroup && hasInnerSwipe((ViewGroup) ch, cx, cy)) return true;
+        }
+        return false;
     }
 
     /** 递归找起手点下方有没有「能横向滚动」的容器 */

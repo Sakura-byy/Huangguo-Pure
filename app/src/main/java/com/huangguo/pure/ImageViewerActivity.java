@@ -3,6 +3,7 @@ package com.huangguo.pure;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Matrix;
@@ -79,7 +80,8 @@ public class ImageViewerActivity extends AppCompatActivity {
         FrameLayout.LayoutParams hp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         hp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-        hp.topMargin = Ui.dp(this, 14);
+        // 标题原来只离顶 14dp，正好压在前摄挖孔上；让出状态栏高度再留 8dp
+        hp.topMargin = Ui.dp(this, 8) + statusBarHeight();
         root.addView(head, hp);
 
         // 底部保存按钮
@@ -96,6 +98,16 @@ public class ImageViewerActivity extends AppCompatActivity {
         root.addView(saveBtn, sp);
 
         load();
+    }
+
+    /** 状态栏高度：优先取系统资源，取不到用 24dp 兜底 */
+    private int statusBarHeight() {
+        int id = getResources().getIdentifier("status_bar_height", "dimen", "android");
+        if (id > 0) {
+            int h = getResources().getDimensionPixelSize(id);
+            if (h > 0) return h;
+        }
+        return Ui.dp(this, 24);
     }
 
     private void load() {
@@ -310,6 +322,27 @@ public class ImageViewerActivity extends AppCompatActivity {
         protected void onDraw(Canvas canvas) {
             if (bmp == null) return;
             canvas.drawBitmap(bmp, matrix, paint);
+        }
+    }
+
+    /** 跟随系统模式下系统切深浅色：原地重建本页，不回主界面 */
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        boolean dark = Theme.isDark(this);
+        if (Theme.mode() == Theme.AUTO && dark != Ui.darkGlass) {
+            Ui.applyPalette(dark);
+            recreate();
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // 兜底：配置变化发生在后台时，回到前台再补一次
+        if (Ui.darkGlass != Theme.isDark(this)) {
+            Ui.applyPalette(Theme.isDark(this));
+            recreate();
         }
     }
 }
