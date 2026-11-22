@@ -42,6 +42,10 @@ public class PagedGrid extends FrameLayout {
         });
         rv.setLayoutManager(glm);
         rv.setAdapter(adapter);
+        // 自身尺寸由父布局定死，内容增删不会改变它 → 省掉每帧的 requestLayout 探测
+        rv.setHasFixedSize(true);
+        // 多留几屏离屏卡：滚动时少一次 bind 就少一次图片 tag 校验与文字重排
+        rv.setItemViewCacheSize(6);
         rv.setClipToPadding(false);
         rv.setPadding(Ui.dp(c, 9), Ui.dp(c, 4), Ui.dp(c, 9), Ui.dp(c, 96));
         rv.setOverScrollMode(OVER_SCROLL_NEVER);

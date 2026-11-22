@@ -277,6 +277,15 @@ public class SearchPage extends FrameLayout {
         onClose = r;
     }
 
+    /**
+     * 沉浸式：整页铺到屏幕边缘，状态栏/导航栏的安全区垫在页面内部。
+     * 状态栏那一块露出的是外层极光，不再是黑条。
+     */
+    public void applyInsets(int top, int bottom) {
+        setPadding(0, Math.max(0, top), 0, Math.max(0, bottom));
+        requestLayout();
+    }
+
     public void setOnOpenRank(Runnable r) {
         onOpenRank = r;
     }

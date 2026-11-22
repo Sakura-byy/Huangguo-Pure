@@ -44,6 +44,8 @@ public class CommentBox extends LinearLayout {
     private final Runnable onNeedLogin;
     private final String likeKind;
     private final TextView head;
+    /** 输入框那一行：算「输入框在屏幕上的位置」要拿它的实测坐标，不能拿整个评论区的 */
+    private LinearLayout inputRow;
     private final LinearLayout list;
     private final EditText input;
     private final TextView sendBtn;
@@ -84,7 +86,7 @@ public class CommentBox extends LinearLayout {
         headRow.addView(tip);
         addView(headRow);
 
-        LinearLayout inputRow = Ui.row(c);
+        inputRow = Ui.row(c);
         LinearLayout.LayoutParams irp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         irp.topMargin = Ui.dp(c, 10);
@@ -145,6 +147,17 @@ public class CommentBox extends LinearLayout {
         more.setVisibility(GONE);
         more.setOnClickListener(v -> load(page + 1));
         addView(more);
+
+        // 键盘弹起 / 收起时 insets 会变：等输入法真的上来再校正一次位置，
+        // 否则只是「以为滚了」，输入框仍压在键盘底下
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(this, (v, insets) -> {
+            int ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom;
+            int sys = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()).bottom;
+            if (ime - sys > 0 && input.hasFocus()) {
+                post(() -> scrollComposerToUpperHalf(0));
+            }
+            return insets;
+        });
     }
 
     public void setTitle(String text) {
@@ -260,32 +273,76 @@ public class CommentBox extends LinearLayout {
         }, 120L);
     }
 
-    /** 已给内容垫过多少底部空间（只垫一次） */
+    /** 内容区原本的底部内边距（第一次垫之前记下来，之后按需恢复） */
+    private int basePadBottom = -1;
+    /** 当前给内容区垫了多少底部空间（键盘高度变了就跟着变） */
     private int paddedBottom;
 
     /**
-     * 把输入框滚到可视区上方 22% 处。
+     * 键盘实际遮住内容区多少像素。
+     *
+     * 播放器/详情页都是 edge-to-edge（decorFitsSystemWindows=false），键盘弹起时窗口不缩高，
+     * 只把 IME insets 加大 —— 所以不能靠 View 高度变化判断，必须直接读 IME 内边距，
+     * 再减掉导航栏（IME insets 里含着它），否则会重复垫高一截。
+     */
+    private int imeOverlap(View anchor) {
+        try {
+            androidx.core.view.WindowInsetsCompat ins =
+                    androidx.core.view.ViewCompat.getRootWindowInsets(anchor);
+            if (ins == null) return 0;
+            int ime = ins.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime()).bottom;
+            int sys = ins.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()).bottom;
+            return Math.max(0, ime - sys);
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+
+    /**
+     * 让输入框停在键盘上方（键盘没弹时停在可视区 22% 处）。
      *
      * 不用 scrollTo 算绝对目标（键盘弹出后可视高度会变，容易算过头把输入框顶出屏幕），
-     * 直接量「输入框离目标线多少」再 scrollBy，重复调用也自洽。
+     * 直接量「输入框底边离目标线多少」再 scrollBy，重复调用也自洽。
+     * 内容区底部垫高按键盘高度动态给：键盘越高垫越多，否则短内容根本滚不动。
      */
     private void scrollComposerToUpperHalf(long delay) {
         final android.widget.ScrollView sv = findScrollHost();
         if (sv == null) return;
         final View content = sv.getChildAt(0);
-        if (content != null && paddedBottom == 0) {
-            paddedBottom = Math.max(Ui.dp(getContext(), 220), sv.getHeight() / 2);
-            content.setPadding(content.getPaddingLeft(), content.getPaddingTop(),
-                    content.getPaddingRight(), content.getPaddingBottom() + paddedBottom);
-        }
         Runnable task = () -> {
-            int[] self = new int[2];
+            int kb = imeOverlap(this);
+            if (content != null) {
+                if (basePadBottom < 0) basePadBottom = content.getPaddingBottom();
+                int need = kb > 0
+                        ? kb + Ui.dp(getContext(), 160)
+                        : Math.max(Ui.dp(getContext(), 220), sv.getHeight() / 2);
+                if (paddedBottom != need) {
+                    paddedBottom = need;
+                    content.setPadding(content.getPaddingLeft(), content.getPaddingTop(),
+                            content.getPaddingRight(), basePadBottom + need);
+                }
+            }
             int[] host = new int[2];
-            getLocationOnScreen(self);
             sv.getLocationOnScreen(host);
-            int inputY = self[1] + Ui.dp(getContext(), 30);
-            int desired = host[1] + (int) (sv.getHeight() * 0.22f);
-            int delta = inputY - desired;
+            // 输入框那一行的真实屏幕位置：拿整个 CommentBox 的高会算出「评论区底部」，
+            // 评论区越长偏得越离谱（会把输入框直接顶出画面）
+            int[] box = new int[2];
+            if (inputRow != null) inputRow.getLocationOnScreen(box);
+            else getLocationOnScreen(box);
+            int composerTop = box[1];
+            int composerBottom = composerTop + (inputRow != null ? inputRow.getHeight() : 0);
+            int delta;
+            if (kb > 0) {
+                // 键盘可见：输入框整行落在「键盘以上可视区」的上端（底边对齐 30% 处），
+                // 不是贴着键盘上沿 —— 贴边只剩一条窄缝，改字看不到上下文
+                int visible = Math.max(Ui.dp(getContext(), 200), sv.getHeight() - kb);
+                int limit = host[1] + (int) (visible * 0.30f);
+                delta = composerBottom - limit;
+            } else {
+                // 键盘没弹：维持原行为，输入框停在可视区上方 22%
+                int desired = host[1] + (int) (sv.getHeight() * 0.22f);
+                delta = composerTop - desired;
+            }
             if (Math.abs(delta) > Ui.dp(getContext(), 6)) sv.smoothScrollBy(0, delta);
         };
         if (delay <= 0) sv.post(task);
@@ -365,6 +422,8 @@ public class CommentBox extends LinearLayout {
 
         TextView text = Ui.text(c, cm.content, 12.5f, Ui.bodyText());
         text.setLineSpacing(Ui.dp(c, 3), 1f);
+        // 长按复制正文（不抢「点一下 = 回复」的点击事件）
+        Ui.copyOnLongPress(text, cm.content);
         LinearLayout.LayoutParams tlp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         tlp.topMargin = Ui.dp(c, 3);
@@ -426,9 +485,11 @@ public class CommentBox extends LinearLayout {
         row.setClickable(true);
         row.setOnClickListener(v -> startReply(cm));
 
-        // 右侧点赞列：与「发表」按钮同一列（右缘对齐），字号大一档
-        TextView like = Ui.text(c, likeText(c, cm, isLikedCm(cm)), 12.5f,
-                isLikedCm(cm) ? Ui.C_AMBER : Ui.C_DIM);
+        // 右侧点赞列：与「发表」按钮同一列（右缘对齐），字号大一档。
+        // 点赞态只查一次本地库（原来一行查两次，20 行就是 40 次主线程查询）
+        final boolean likedNow = isLikedCm(cm);
+        TextView like = Ui.text(c, likeText(c, cm, likedNow), 12.5f,
+                likedNow ? Ui.C_AMBER : Ui.C_DIM);
         like.setGravity(Gravity.CENTER);
         if (likeKind != null && cm.id > 0) {
             like.setClickable(true);
@@ -486,6 +547,7 @@ public class CommentBox extends LinearLayout {
 
         TextView text = Ui.text(c, r.content, 11.5f, Ui.bodyText());
         text.setLineSpacing(Ui.dp(c, 2), 1f);
+        Ui.copyOnLongPress(text, r.content);
         col.addView(text);
         return row;
     }

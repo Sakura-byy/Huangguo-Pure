@@ -305,4 +305,38 @@ public final class Ui {
     public static int alpha(int color, float a) {
         return Color.argb((int) (a * 255), Color.red(color), Color.green(color), Color.blue(color));
     }
+
+    /**
+     * 长按复制整段文字。
+     *
+     * 不打开系统的文字选择手柄：评论行本身要响应「点一下 = 回复」，
+     * 一旦 setTextIsSelectable(true)，TextView 会自己吃掉点击事件，回复就点不动了。
+     * 这里只挂长按，长按复制全文 + 一行提示，点击行为原样保留。
+     */
+    public static void copyOnLongPress(final TextView tv, final String text) {
+        if (tv == null) return;
+        tv.setOnLongClickListener(v -> {
+            copy(v.getContext(), text, "已复制到剪贴板");
+            v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+            return true;
+        });
+    }
+
+    /** 复制并提示 */
+    public static void copy(android.content.Context c, String text, String toast) {
+        if (c == null) return;
+        String body = text == null ? "" : text;
+        if (body.trim().isEmpty()) return;
+        try {
+            android.content.ClipboardManager cm = (android.content.ClipboardManager)
+                    c.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+            if (cm == null) throw new Exception("剪贴板不可用");
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("huangguo", body));
+            android.widget.Toast.makeText(c, toast == null ? "已复制" : toast,
+                    android.widget.Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            android.widget.Toast.makeText(c, "复制失败：" + e.getMessage(),
+                    android.widget.Toast.LENGTH_SHORT).show();
+        }
+    }
 }

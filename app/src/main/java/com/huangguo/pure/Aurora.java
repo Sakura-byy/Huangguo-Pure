@@ -1,13 +1,12 @@
 package com.huangguo.pure;
 
-import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RadialGradient;
 import android.graphics.Shader;
+import android.os.SystemClock;
 import android.view.View;
-import android.view.animation.LinearInterpolator;
 
 /** 背景极光：三团缓慢漂移的柔光，给玻璃面板提供背衬层次 */
 public class Aurora extends View {
@@ -16,11 +15,46 @@ public class Aurora extends View {
     private float phase;
     private float r0, r1, r2;
     private int w, h;
-    private ValueAnimator animator;
-    private long lastPaintAt = 0L;
-    /** 全屏 3 团 RadialGradient 每帧重绘 GPU 顶不住：重绘节流到 ~15fps，
-     *  26 秒一圈的慢漂在这个帧率下肉眼无差别，GPU 占用降为 1/4 */
+    /** 26 秒一圈的慢漂：相位直接按开机时间算，不用 ValueAnimator */
+    private static final long CYCLE_MS = 26000L;
+    /** 重绘节流到 ~15fps：全屏 3 团 RadialGradient 每帧重绘 GPU 顶不住，
+     *  26 秒一圈的慢漂在这个帧率下肉眼无差别 */
     private static final long PAINT_GAP_MS = 66L;
+    private long lastTickAt = 0L;
+    /** 活跃时长累计：暂停期间不累加，恢复时从原位继续，不会跳变 */
+    private long activeMs = 0L;
+    private boolean running;
+
+    /** 全局忙状态（列表滚动 / 手指在屏上）：此时极光不重绘 */
+    private static volatile boolean globalBusy;
+
+    /**
+     * 自调度重绘：每 PAINT_GAP_MS 走一步。
+     *
+     * 原来用 ValueAnimator：它每帧（~60fps）都会回调一次，再靠时间戳丢掉 3/4 的帧，
+     * 白唤醒 CPU 45 次/秒；且 Activity 退到后台、窗口不可见时动画照跑。
+     * 现在只有「窗口可见」才排下一次重绘，后台完全静止 —— 观感一致，耗电明显下降。
+     */
+    private final Runnable tick = new Runnable() {
+        @Override
+        public void run() {
+            if (!running) return;
+            long now = SystemClock.uptimeMillis();
+            if (lastTickAt == 0L) lastTickAt = now;
+            long dt = Math.min(now - lastTickAt, 200L);
+            lastTickAt = now;
+            if (!globalBusy) {
+                activeMs += dt;
+                phase = (activeMs % CYCLE_MS) / (float) CYCLE_MS;
+                invalidate();
+            }
+            postDelayed(this, PAINT_GAP_MS);
+        }
+    };
+
+    public static void setGlobalBusy(boolean v) {
+        globalBusy = v;
+    }
 
     public Aurora(Context c) {
         super(c);
@@ -36,31 +70,35 @@ public class Aurora extends View {
         r2 = nh * 0.55f;
     }
 
+    private void startTicking() {
+        if (running) return;
+        running = true;
+        postDelayed(tick, PAINT_GAP_MS);
+    }
+
+    private void stopTicking() {
+        running = false;
+        removeCallbacks(tick);
+    }
+
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
-        if (animator != null) return;
-        animator = ValueAnimator.ofFloat(0f, 1f);
-        animator.setDuration(26000L);
-        animator.setRepeatCount(ValueAnimator.INFINITE);
-        animator.setInterpolator(new LinearInterpolator());
-        animator.addUpdateListener(a -> {
-            long now = android.os.SystemClock.uptimeMillis();
-            if (now - lastPaintAt < PAINT_GAP_MS) return;
-            lastPaintAt = now;
-            phase = (float) a.getAnimatedValue();
-            invalidate();
-        });
-        animator.start();
+        startTicking();
     }
 
     @Override
     protected void onDetachedFromWindow() {
-        if (animator != null) {
-            animator.cancel();
-            animator = null;
-        }
+        stopTicking();
         super.onDetachedFromWindow();
+    }
+
+    /** 窗口不可见（退到后台 / 被覆盖）时停掉重绘，回来再续上：相位按时间算，接得上 */
+    @Override
+    protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility);
+        if (visibility == VISIBLE) startTicking();
+        else stopTicking();
     }
 
     private void blob(Canvas cv, float cx, float cy, float radius, int color) {

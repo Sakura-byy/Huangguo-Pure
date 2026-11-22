@@ -20,3 +20,12 @@
 
 # FileProvider 由 manifest 声明、系统按类名实例化
 -keep class androidx.core.content.FileProvider { *; }
+
+# 日志调用整段删掉（含字符串拼接）：release 里没人看，dex 与运行期都省
+-assumenosideeffects class android.util.Log {
+    public static *** d(...);
+    public static *** v(...);
+    public static *** i(...);
+    public static *** w(...);
+    public static *** e(...);
+}

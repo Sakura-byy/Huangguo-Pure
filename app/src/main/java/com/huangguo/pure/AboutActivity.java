@@ -126,7 +126,7 @@ public class AboutActivity extends AppCompatActivity {
         card.addView(row("≡", "更新日志", "从 GitHub 仓库实时获取", "",
                 v -> Update.showChangelog(this)));
         card.addView(div());
-        card.addView(row("⇗", "分享给好友", "微信 · 朋友圈 · QQ", "",
+        card.addView(row("⇗", "分享给好友", "微信 · QQ · 复制链接", "",
                 v -> showShareMenu(v)));
 
         TextView foot = Ui.text(this, "Huangguo Pure · 非官方第三方客户端", 10.5f, Ui.C_DIM);
@@ -212,11 +212,11 @@ public class AboutActivity extends AppCompatActivity {
         GlassMenu.show(anchor, GlassMenu.items(
                 new GlassMenu.Item("💬", "微信好友",
                         () -> shareTo("com.tencent.mm", null, "微信")),
-                new GlassMenu.Item("◉", "微信朋友圈",
-                        () -> shareTo("com.tencent.mm",
-                                "com.tencent.mm.ui.tools.ShareToTimeLineUI", "微信朋友圈")),
                 new GlassMenu.Item("🐧", "QQ",
-                        () -> shareTo("com.tencent.mobileqq", null, "QQ"))));
+                        () -> shareTo("com.tencent.mobileqq", null, "QQ")),
+                // 朋友圈接口在部分机型上会静默失败，换成更通用的复制链接
+                new GlassMenu.Item("⧉", "复制分享链接",
+                        () -> Ui.copy(this, shareText(), "分享文案已复制"))));
     }
 
     /** 定向分享；目标应用不在时回退系统选择器 */
@@ -283,8 +283,9 @@ public class AboutActivity extends AppCompatActivity {
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        boolean dark = Theme.isDark(this);
-        if (Theme.mode() == Theme.AUTO && dark != Ui.darkGlass) {
+        // 实际明暗与当前调色板不一致就整页重载（手动切主题 / 跟随系统都走这里）；
+        // 单纯旋屏时两者相同，什么都不做。播放器不参与，正在播的视频不重建
+        if (Theme.isDark(this) != Ui.darkGlass) {
             Ui.retheme(this);
         }
     }

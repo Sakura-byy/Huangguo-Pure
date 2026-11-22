@@ -123,6 +123,9 @@ public class PlayerActivity extends AppCompatActivity {
     private FrameLayout overlay;
     private LinearLayout topPanel;
     private LinearLayout bottomPanel;
+    /** 进度条整行 / 工具按钮整行：横竖屏要分别调尺寸，提成字段 */
+    private LinearLayout seekRow;
+    private LinearLayout toolRow;
     private LinearLayout epSheet;
     private FrameLayout centerWrap;
     private ImageView centerBtn;
@@ -404,7 +407,7 @@ public class PlayerActivity extends AppCompatActivity {
 
         applyOverlayWidth();
 
-        LinearLayout seekRow = Ui.row(this);
+        seekRow = Ui.row(this);
         bottomPanel.addView(seekRow, Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 30)));
 
         timeNow = Ui.text(this, "00:00", 10.5f, Ui.subText());
@@ -424,7 +427,7 @@ public class PlayerActivity extends AppCompatActivity {
         timeTotal = Ui.text(this, "00:00", 10.5f, Ui.subText());
         seekRow.addView(timeTotal);
 
-        LinearLayout toolRow = Ui.row(this);
+        toolRow = Ui.row(this);
         LinearLayout.LayoutParams trp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         trp.topMargin = Ui.dp(this, 2);
@@ -820,22 +823,31 @@ public class PlayerActivity extends AppCompatActivity {
         }
     }
 
-    /** 横屏时顶/底控制条铺满屏宽：左右零边距贴边、底部贴边、圆角改直角；竖屏保持悬浮卡片 */
+    /** 横竖屏共用的悬浮控制条：横屏不贴边、不贴底，和竖屏一样是一块悬浮玻璃卡片 */
     private final java.util.List<View> toolSpacers = new java.util.ArrayList<>();
 
+    /**
+     * 控制条布局（竖屏 / 横屏各一套）。
+     *
+     * 竖屏：左右 12dp、顶栏垫状态栏、底栏离底 16dp，圆角 22dp，工具条紧凑左对齐。
+     * 横屏：同样悬浮（左右 12dp、离底 14dp、圆角 22dp），但顶栏不再垫状态栏高度 ——
+     *       播放器是全屏沉浸的，状态栏本来就不占位，垫进去只会把顶栏压到画面中部；
+     *       工具条改成等宽大按钮（38dp 高、字号 12.5sp、胶囊圆角 19dp），
+     *       均分整行宽度，间距一致，不再是一排挤在左边的小胶囊。
+     */
     private void applyOverlayWidth() {
         if (topPanel == null || bottomPanel == null) return;
         boolean land = getResources().getConfiguration().orientation
                 == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
-        int side = land ? 0 : Ui.dp(this, 12);
+        int side = Ui.dp(this, 12);
         int tint = Ui.darkGlass ? 0x66121522 : 0x66FFFFFF;
-        float rad = land ? 0f : Ui.dp(this, 22);
+        float rad = Ui.dp(this, 22);
         float ref = Ui.dp(this, 8);
 
         FrameLayout.LayoutParams tp = (FrameLayout.LayoutParams) topPanel.getLayoutParams();
         tp.leftMargin = side;
         tp.rightMargin = side;
-        tp.topMargin = (land ? Ui.dp(this, 6) : Ui.dp(this, 12)) + statusBarHeight();
+        tp.topMargin = land ? Ui.dp(this, 10) : Ui.dp(this, 12) + statusBarHeight();
         topPanel.setLayoutParams(tp);
         topGlass = new LiquidGlassDrawable(rad, tint, ref, 0f);
         topPanel.setBackground(topGlass);
@@ -843,14 +855,98 @@ public class PlayerActivity extends AppCompatActivity {
         FrameLayout.LayoutParams bp = (FrameLayout.LayoutParams) bottomPanel.getLayoutParams();
         bp.leftMargin = side;
         bp.rightMargin = side;
-        bp.bottomMargin = land ? 0 : Ui.dp(this, 16);
+        bp.bottomMargin = land ? Ui.dp(this, 14) : Ui.dp(this, 16);
         bottomPanel.setLayoutParams(bp);
         bottomGlass = new LiquidGlassDrawable(rad, tint, ref, 0f);
         bottomPanel.setBackground(bottomGlass);
 
-        // 横屏拉开 chip 间距铺满整排，竖屏收拢回紧凑左对齐
-        for (View gap : toolSpacers) {
-            gap.setVisibility(land ? View.VISIBLE : View.GONE);
+        // 底部卡片内边距：横屏放大一档，进度条与按钮之间留出呼吸空间
+        bottomPanel.setPadding(land ? Ui.dp(this, 18) : Ui.dp(this, 14),
+                land ? Ui.dp(this, 12) : Ui.dp(this, 8),
+                land ? Ui.dp(this, 18) : Ui.dp(this, 14),
+                land ? Ui.dp(this, 14) : Ui.dp(this, 10));
+
+        if (seekRow != null) {
+            LinearLayout.LayoutParams srp = (LinearLayout.LayoutParams) seekRow.getLayoutParams();
+            srp.height = Ui.dp(this, land ? 34 : 30);
+            seekRow.setLayoutParams(srp);
+        }
+        if (timeNow != null) timeNow.setTextSize(land ? 11.5f : 10.5f);
+        if (timeTotal != null) timeTotal.setTextSize(land ? 11.5f : 10.5f);
+
+        styleToolBar(land);
+    }
+
+    /**
+     * 工具条：奇偶位是按钮 / 弹性 spacer。
+     * 横屏给文本按钮 weight=1 均分整行，图标按钮固定 56dp；竖屏恢复紧凑原样。
+     */
+    private void styleToolBar(boolean land) {
+        if (toolRow == null) return;
+        int chipH = Ui.dp(this, land ? 38 : 29);
+        for (int i = 0; i < toolRow.getChildCount(); i++) {
+            View v = toolRow.getChildAt(i);
+            LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) v.getLayoutParams();
+            boolean gap = (i % 2) == 1;
+            if (gap) {
+                // 横屏用等宽按钮铺满，spacer 两种方向都不再参与布局
+                lp.width = 0;
+                lp.height = 1;
+                lp.weight = 0f;
+                v.setLayoutParams(lp);
+                v.setVisibility(View.GONE);
+                continue;
+            }
+            boolean textBtn = v instanceof TextView;
+            boolean orient = (v == orientBtn);
+            if (land) {
+                lp.height = chipH;
+                lp.weight = textBtn ? 1f : 0f;
+                lp.width = textBtn ? 0 : Ui.dp(this, 56);
+                if (textBtn) {
+                    TextView t = (TextView) v;
+                    t.setTextSize(12.5f);
+                    t.setPadding(0, 0, 0, 0);
+                    t.setBackground(Ui.stroke(Ui.chipFill(), Ui.chipStroke(), Ui.dp(this, 19), 1));
+                } else {
+                    v.setBackground(Ui.stroke(Ui.chipFill(), Ui.chipStroke(), Ui.dp(this, 19), 1));
+                }
+                scaleIcon(v, land ? 19 : (orient ? 16 : 15));
+            } else {
+                lp.weight = 0f;
+                if (textBtn) {
+                    lp.width = ViewGroup.LayoutParams.WRAP_CONTENT;
+                    lp.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+                    TextView t = (TextView) v;
+                    t.setTextSize(11f);
+                    t.setPadding(Ui.dp(this, 9), Ui.dp(this, 6), Ui.dp(this, 9), Ui.dp(this, 6));
+                    t.setBackground(Ui.stroke(Ui.chipFill(), Ui.chipStroke(), Ui.dp(this, 14), 1));
+                } else if (orient) {
+                    lp.width = Ui.dp(this, 36);
+                    lp.height = Ui.dp(this, 29);
+                    v.setBackground(Ui.stroke(Ui.chipFill(), Ui.chipStroke(), Ui.dp(this, 14), 1));
+                } else {
+                    lp.width = Ui.dp(this, 32);
+                    lp.height = Ui.dp(this, 32);
+                    v.setBackground(Ui.stroke(Ui.chipFill(), Ui.chipStroke(), Ui.dp(this, 14), 1));
+                }
+                if (!textBtn) scaleIcon(v, orient ? 16 : 15);
+            }
+            v.setLayoutParams(lp);
+        }
+    }
+
+    /** 图标按钮里的图标跟着按钮一起放大（横屏大按钮里 15dp 的图标会显小） */
+    private void scaleIcon(View button, int dp) {
+        if (!(button instanceof android.view.ViewGroup)) return;
+        android.view.ViewGroup g = (android.view.ViewGroup) button;
+        for (int k = 0; k < g.getChildCount(); k++) {
+            View child = g.getChildAt(k);
+            if (!(child instanceof android.widget.ImageView)) continue;
+            android.view.ViewGroup.LayoutParams lp = child.getLayoutParams();
+            lp.width = Ui.dp(this, dp);
+            lp.height = Ui.dp(this, dp);
+            child.setLayoutParams(lp);
         }
     }
 
@@ -1551,7 +1647,7 @@ public class PlayerActivity extends AppCompatActivity {
     // ------------------------------------------------------------------ 预缓存
 
     /**
-     * 磁盘缓存目录：app 私有，卸载即清；上限 300MB，超出按 LRU 淘汰。
+     * 磁盘缓存目录：app 私有，卸载即清；上限 180MB，超出按 LRU 淘汰（不会无限膨胀）。
      * SimpleCache 带文件锁，同一进程只能有一个实例 —— 做成静态单例，Activity 重建不重复建。
      */
     private SimpleCache buildMediaCache() {
@@ -1562,12 +1658,29 @@ public class PlayerActivity extends AppCompatActivity {
                 if (!dir.exists()) dir.mkdirs();
                 sMediaCache = new SimpleCache(dir,
                         new androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor(
-                                300L * 1024 * 1024),
+                                180L * 1024 * 1024),
                         new StandaloneDatabaseProvider(this));
             } catch (Throwable t) {
                 sMediaCache = null;
             }
             return sMediaCache;
+        }
+    }
+
+    /**
+     * 清理缓存前调用：先 release 掉 SimpleCache（它握着 media_cache 里的文件锁与索引），
+     * 否则直接删目录会留下半删状态 —— 下次播放读到坏索引就整段播不动。
+     * 释放后置空，下次进播放器由 buildMediaCache() 重新建。
+     */
+    public static void releaseMediaCacheForClean() {
+        synchronized (PlayerActivity.class) {
+            if (sMediaCache == null) return;
+            try {
+                sMediaCache.release();
+            } catch (Throwable ignored) {
+                // 已经释放过
+            }
+            sMediaCache = null;
         }
     }
 
@@ -1656,7 +1769,9 @@ public class PlayerActivity extends AppCompatActivity {
                     }
                     if (++tick % 6 == 0 && player.isPlaying()) saveHistory();
                 }
-                ui.postDelayed(this, 500);
+                // 播放中 500ms 一次；暂停 / 缓冲时位置不变，降到 1s，省一半唤醒
+                boolean active = player != null && player.isPlaying();
+                ui.postDelayed(this, active ? 500L : 1000L);
             }
         });
     }

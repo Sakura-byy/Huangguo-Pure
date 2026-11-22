@@ -413,8 +413,9 @@ public class AccountActivity extends AppCompatActivity {
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        boolean dark = Theme.isDark(this);
-        if (Theme.mode() == Theme.AUTO && dark != Ui.darkGlass) {
+        // 实际明暗与当前调色板不一致就整页重载（手动切主题 / 跟随系统都走这里）；
+        // 单纯旋屏时两者相同，什么都不做。播放器不参与，正在播的视频不重建
+        if (Theme.isDark(this) != Ui.darkGlass) {
             Ui.retheme(this);
         }
     }

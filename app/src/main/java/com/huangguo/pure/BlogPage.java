@@ -88,6 +88,7 @@ public class BlogPage extends FrameLayout implements PullRefresh.Refreshable {
         rv = new RecyclerView(c);
         rv.setLayoutManager(lm);
         rv.setAdapter(adapter);
+        rv.setHasFixedSize(true);
         rv.setClipToPadding(false);
         rv.setPadding(0, Ui.dp(c, 2), 0, Ui.dp(c, 24));
         rv.setOverScrollMode(OVER_SCROLL_NEVER);
@@ -292,6 +293,9 @@ public class BlogPage extends FrameLayout implements PullRefresh.Refreshable {
             cover = new AspectImageView(c);
             cover.setRatio(0.72f);
             cover.setLayoutParams(Ui.lp(Ui.dp(c, 108), Ui.dp(c, 78)));
+            // 横幅封面圆角：方角贴在文字旁边太硬，跟站内其它卡片统一成 12dp
+            cover.setBackground(Ui.round(0x14FFFFFF, Ui.dp(c, 12)));
+            cover.setClipToOutline(true);
             addView(cover);
 
             LinearLayout texts = Ui.col(c);

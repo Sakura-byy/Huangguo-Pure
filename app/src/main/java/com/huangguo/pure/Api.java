@@ -84,9 +84,14 @@ public final class Api {
         if (c == null) return;
         Auth.init(c);
         prefs = c.getApplicationContext().getSharedPreferences("hg_client", Context.MODE_PRIVATE);
-        String saved = prefs.getString("host", null);
-        if (saved != null && !saved.isEmpty()) host = saved;
+        // 手动切线路只在本次运行内有效：启动一律回到「自动选最优」，
+        // 上次锁定在某条慢线（或已失效的线）不该拖到下一次启动
+        prefs.edit().remove("host").apply();
+        host = null;
         applyMirrors(prefs.getString("mirrors", ""));
+        // 用上次测速的结果先顶上最快的那条，等 syncMirrors 拿到新结果再换
+        java.util.List<Mirror.Line> cached = lines();
+        if (!cached.isEmpty() && cached.get(0).ms >= 0) host = cached.get(0).url;
     }
 
     /** 内置兜底线路（只读） */
@@ -191,11 +196,8 @@ public final class Api {
         if (prefs != null) {
             prefs.edit().putLong("mirror_at", System.currentTimeMillis()).apply();
         }
-        // 没有手动锁定过线路时，直接走最快的
-        if (prefs == null || prefs.getString("host", "").isEmpty()) {
-            String best = lines.get(0).url;
-            if (lines.get(0).ms >= 0) useHost(best);
-        }
+        // 每次测速完成都无条件切到最快的线路（手动选择不跨进程保留）
+        if (lines.get(0).ms >= 0) useHost(lines.get(0).url);
         return true;
     }
 
@@ -818,13 +820,19 @@ public final class Api {
 
     /** 发一级评论（需登录）。集号只认 query，正文只带 text。 */
     public static void postVideoComment(long id, int ep, String text, final Cb<String> cb) {
+        if (!Auth.loggedIn()) {
+            fail(cb, "请先登录");
+            return;
+        }
         JSONObject body = new JSONObject();
         try {
             body.put("text", text);
         } catch (Exception ignored) {
             // text 一定可序列化
         }
-        postRaw("/api/videos/" + id + "/comments?ep=" + Math.max(1, ep), body, new Cb<JSONObject>() {
+        // 鉴权只认 ?token=：缺了这一段服务端一律回 unauthorized
+        postRaw(authPath("/api/videos/" + id + "/comments?ep=" + Math.max(1, ep)),
+                body, new Cb<JSONObject>() {
             @Override
             public void ok(JSONObject data) {
                 cb.ok("已提交，审核通过后展示");
@@ -839,6 +847,10 @@ public final class Api {
 
     /** 发回复（需登录）：reply_id 带上，集号由服务端继承父楼 */
     public static void replyVideoComment(long id, long replyId, String text, final Cb<String> cb) {
+        if (!Auth.loggedIn()) {
+            fail(cb, "请先登录");
+            return;
+        }
         JSONObject body = new JSONObject();
         try {
             body.put("text", text);
@@ -846,7 +858,7 @@ public final class Api {
         } catch (Exception ignored) {
             // 同上
         }
-        postRaw("/api/videos/" + id + "/comments", body, new Cb<JSONObject>() {
+        postRaw(authPath("/api/videos/" + id + "/comments"), body, new Cb<JSONObject>() {
             @Override
             public void ok(JSONObject data) {
                 cb.ok("已提交，审核通过后展示");
@@ -861,13 +873,17 @@ public final class Api {
 
     /** 博客留言（需登录）：POST /api/posts/{id}/comments */
     public static void postPostComment(long id, String text, final Cb<String> cb) {
+        if (!Auth.loggedIn()) {
+            fail(cb, "请先登录");
+            return;
+        }
         JSONObject body = new JSONObject();
         try {
             body.put("text", text);
         } catch (Exception ignored) {
             // 同上
         }
-        postRaw("/api/posts/" + id + "/comments", body, new Cb<JSONObject>() {
+        postRaw(authPath("/api/posts/" + id + "/comments"), body, new Cb<JSONObject>() {
             @Override
             public void ok(JSONObject data) {
                 cb.ok("已提交，审核通过后展示");

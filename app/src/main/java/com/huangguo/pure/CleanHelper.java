@@ -71,12 +71,22 @@ public final class CleanHelper {
         showGlassDialog(c, box, overlayRef);
     }
 
-    /** 递归删除 cacheDir 内容，返回释放字节数 */
+    /**
+     * 递归删除 cacheDir 内容，返回释放字节数。
+     *
+     * 顺序很重要（对齐 Media3 / Glide 的清理做法）：
+     *  1. 先 release 播放器的 SimpleCache —— 它握着 media_cache 的文件锁与索引文件，
+     *     带着锁删目录会留下半删状态，下次播放读到坏索引就卡死；
+     *  2. 再清图片缓存（内存 LRU + img 目录），这部分不走文件系统遍历，单独统计更准；
+     *  3. 最后才删整个 cacheDir / codeCache，把剩下的边角料一起收掉。
+     */
     private static long clearCacheDir(Context c) {
-        long[] freed = {0L};
-        deleteDir(c.getCacheDir(), freed);
-        deleteDir(c.getCodeCacheDir(), freed);
-        return freed[0];
+        PlayerActivity.releaseMediaCacheForClean();
+        long freed = ImageLoader.clear();
+        long[] rest = {0L};
+        deleteDir(c.getCacheDir(), rest);
+        deleteDir(c.getCodeCacheDir(), rest);
+        return freed + rest[0];
     }
 
     private static void deleteDir(File dir, long[] freed) {

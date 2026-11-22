@@ -412,6 +412,8 @@ public class DetailActivity extends AppCompatActivity {
             desc.setLineSpacing(Ui.dp(this, 3), 1f);
             desc.setMaxLines(4);
             desc.setEllipsize(TextUtils.TruncateAt.END);
+            // 简介可长按选择/复制（与博客正文同一套交互）
+            desc.setTextIsSelectable(true);
             LinearLayout.LayoutParams dp = Ui.lp(ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
             dp.topMargin = Ui.dp(this, 7);
@@ -1005,8 +1007,9 @@ public class DetailActivity extends AppCompatActivity {
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        boolean dark = Theme.isDark(this);
-        if (Theme.mode() == Theme.AUTO && dark != Ui.darkGlass) {
+        // 实际明暗与当前调色板不一致就整页重载（手动切主题 / 跟随系统都走这里）；
+        // 单纯旋屏时两者相同，什么都不做。播放器不参与，正在播的视频不重建
+        if (Theme.isDark(this) != Ui.darkGlass) {
             Ui.retheme(this);
         }
     }

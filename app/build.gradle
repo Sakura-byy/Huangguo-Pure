@@ -12,9 +12,10 @@ android {
         applicationId 'com.huangguo.pure'
         minSdk 24
         targetSdk 36
-        versionCode 21
-        versionName '1.2.0'
-        resConfigs 'zh', 'en'
+        versionCode 22
+        versionName '1.2.1'
+        // 只保留中文资源：依赖库自带几十种语言，砍掉后 resources.arsc 更小
+        resConfigs 'zh'
         // 只打 64 位：省掉 armeabi-v7a / x86 / x86_64 三套原生库与对齐填充
         ndk { abiFilters 'arm64-v8a' }
     }
@@ -84,7 +85,11 @@ android {
                     'META-INF/DEPENDENCIES',
                     'META-INF/**/LICENSE*',
                     'META-INF/**/*.version',
-                    'DebugProbesKt.bin'
+                    'DebugProbesKt.bin',
+                    // OkHttp 的公共后缀表：只有 Cookie 域名匹配用得到，本项目不用 Cookie
+                    'okhttp3/internal/publicsuffix/**',
+                    // Kotlin 内建声明表：只有 kotlin-reflect 会读，本项目没有反射
+                    'kotlin/**/*.kotlin_builtins'
             ]
         }
     }

@@ -110,6 +110,19 @@ class DampedDragAnimation(
         }
     }
 
+    /**
+     * 拖动跟手：位置立刻生效，不做弹簧插值。
+     *
+     * updateValue 走 spring(1f, 1000f)，手指快速划动时稳态滞后约 v/ω（≈40px），
+     * 表现出来就是「胶囊拖在半路」。拖动期间用 snapTo 直接跟上，抬手吸附仍走 animateToValue。
+     */
+    fun trackValue(value: Float) {
+        val v = value.coerceIn(valueRange)
+        animationScope.launch {
+            valueAnimation.snapTo(v)
+        }
+    }
+
     fun updateValue(value: Float) {
         val targetValue = value.coerceIn(valueRange)
         animationScope.launch {

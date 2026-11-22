@@ -40,6 +40,7 @@ public class MainActivity extends AppCompatActivity {
     private com.huangguo.pure.glass.DockState dockState;
     private DockBackdrop dockBackdrop;
     private FrameLayout searchLayer;
+    private SearchPage searchPage;
     private boolean searchOpen = false;
     private int insetTop = 0;
     private int insetBottom = 0;
@@ -63,8 +64,12 @@ public class MainActivity extends AppCompatActivity {
                     dockTouch = inDock(ev);
                     dockBackdrop.setPaused(dockTouch);
                 }
+                holdAurora(900L);
             case MotionEvent.ACTION_MOVE:
-                kickPulse(120L);
+                // 手指按在 Dock 上拖动时背景是静止的、采样已经暂停，
+                // 再逐帧排一个 pulse 只会在主线程上加一帧一次的回调，白耗
+                if (!dockTouch) kickPulse(120L);
+                holdAurora(900L);
                 break;
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
@@ -77,11 +82,23 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
                 kickPulse(2200L);
+                // 抬手后还有惯性滑行：惯性期间极光继续冻结，停稳再恢复
+                holdAurora(1200L);
                 break;
             default:
                 break;
         }
         return super.dispatchTouchEvent(ev);
+    }
+
+    /** 极光恢复重绘的延时任务：滚动 / 惯性期间不重绘那三团全屏柔光 */
+    private final Runnable auroraIdle = () -> Aurora.setGlobalBusy(false);
+
+    private void holdAurora(long ms) {
+        if (root == null) return;
+        Aurora.setGlobalBusy(true);
+        root.removeCallbacks(auroraIdle);
+        root.postDelayed(auroraIdle, ms);
     }
 
     /** 本次手势是否按在 Dock 上（拖动期间暂停背景采样） */
@@ -190,7 +207,10 @@ public class MainActivity extends AppCompatActivity {
                 // 上面那一块由液态玻璃填满，页面内容从顶栏下沿开始。
                 container.setPadding(0, 0, 0, 0);
                 navWrap.setPadding(0, 0, 0, Math.max(sys.bottom, Ui.dp(MainActivity.this, 8)));
-                if (searchLayer != null) searchLayer.setPadding(0, sys.top, 0, 0);
+                // 搜索页是沉浸式的：层铺满整屏，安全区垫在页面里，状态栏那一块由极光填满
+                if (searchPage != null) {
+                    searchPage.applyInsets(sys.top, Math.max(sys.bottom, Ui.dp(MainActivity.this, 8)));
+                }
                 return insets;
             }
         });
@@ -210,6 +230,8 @@ public class MainActivity extends AppCompatActivity {
 
         // 每天第一次启动检查更新（设置里的开关关掉就不跑）
         Update.checkDaily(this);
+        // 每天做一次缓存体检：缓存目录只增不减的话，用久了会悄悄吃满几百兆
+        dailyCacheUpkeep();
         // 已登录且本地数据有变动：顺手把收藏/历史推给账号（未登录直接返回）
         Sync.pushIfDirty(this);
 
@@ -225,6 +247,31 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         });
+    }
+
+    /**
+     * 每日一次的缓存维护（对齐 Coil / Glide 的定期维护思路）：
+     * 图片磁盘缓存按 LRU 收到上限的 80%，内存缓存直接放掉。
+     * 24 小时内只跑一次，放在启动后 1.5 秒的空闲窗口里，不挡首屏。
+     */
+    private void dailyCacheUpkeep() {
+        try {
+            final android.content.SharedPreferences sp =
+                    getSharedPreferences("hg_client", MODE_PRIVATE);
+            long last = sp.getLong("cache_upkeep_at", 0L);
+            if (System.currentTimeMillis() - last < 24L * 3600_000L) return;
+            sp.edit().putLong("cache_upkeep_at", System.currentTimeMillis()).apply();
+            ImageLoader.init(this);
+            root.postDelayed(() -> {
+                try {
+                    ImageLoader.trimDiskNow();
+                } catch (Throwable ignored) {
+                    // 维护失败不影响使用
+                }
+            }, 1500L);
+        } catch (Throwable ignored) {
+            // 读不到偏好就跳过
+        }
     }
 
     private void buildNav() {
@@ -324,6 +371,7 @@ public class MainActivity extends AppCompatActivity {
         if (dockBackdrop != null) {
             pageHost.post(() -> dockBackdrop.refresh());
             kickPulse(1500L);
+            holdAurora(1500L);
         }
     }
 
@@ -348,7 +396,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
-        if (Theme.mode() == Theme.AUTO && Theme.isDark(this) != Ui.darkGlass) {
+        if (Theme.isDark(this) != Ui.darkGlass) {
             // 先换调色板再重建：只 recreate 不换色，会先渲染出一帧旧配色的花屏
             Ui.retheme(this);
         }
@@ -414,7 +462,8 @@ public class MainActivity extends AppCompatActivity {
                 dismissThemeMenu(layer);
                 if (m != Theme.mode()) {
                     Theme.setMode(this, m);
-                    recreate();
+                    // 走统一入口：先换调色板再重建，整页重新加载（页面内的列表 / 卡片一起重画）
+                    Ui.retheme(this);
                 }
             });
             col.addView(row);
@@ -448,21 +497,23 @@ public class MainActivity extends AppCompatActivity {
         searchOpen = true;
         if (searchLayer == null) {
             searchLayer = new FrameLayout(this);
+            // 底色 + 极光铺满整屏（含状态栏那一条），搜索页自己再让出状态栏
             searchLayer.setBackgroundColor(0xF505070C);
             searchLayer.addView(new Aurora(this), new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-            SearchPage page = new SearchPage(this, container);
-            page.setOnClose(this::closeSearch);
+            searchPage = new SearchPage(this, container);
+            searchPage.setOnClose(this::closeSearch);
             // 搜索页里的「去排行页」：先收起搜索层，再切到排行 tab
-            page.setOnOpenRank(() -> {
+            searchPage.setOnOpenRank(() -> {
                 closeSearch();
                 selectPrimary(2);
             });
-            searchLayer.addView(page, new FrameLayout.LayoutParams(
+            searchLayer.addView(searchPage, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
-            addLayer(searchLayer);
+            // false：不给层本身加内边距，交给 SearchPage，极光才能顶到屏幕最上沿
+            addLayer(searchLayer, false);
         }
         searchLayer.setVisibility(View.VISIBLE);
         searchLayer.setAlpha(0f);
@@ -471,19 +522,38 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void addLayer(View layer) {
+        addLayer(layer, true);
+    }
+
+    /**
+     * @param padSelf true：安全区垫在层自身（弹层内边距）；
+     *                false：层铺满整屏，安全区交给层里的内容（搜索页那种沉浸式页面）
+     */
+    private void addLayer(View layer, final boolean padSelf) {
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
         root.addView(layer, lp);
         // 新加的层不会自动收到一次 insets 分发，先用已缓存的值把安全区垫上，
         // 否则搜索页头部会直接顶到状态栏
-        layer.setPadding(0, insetTop, 0, Math.max(insetBottom, Ui.dp(this, 8)));
+        layer.setPadding(0, padSelf ? insetTop : 0, 0,
+                padSelf ? Math.max(insetBottom, Ui.dp(this, 8)) : 0);
         ViewCompat.setOnApplyWindowInsetsListener(layer, (v, insets) -> {
             Insets sys = insets.getInsets(WindowInsetsCompat.Type.systemBars());
             insetTop = sys.top;
             insetBottom = sys.bottom;
-            v.setPadding(0, sys.top, 0, Math.max(sys.bottom, Ui.dp(this, 8)));
+            if (padSelf) {
+                v.setPadding(0, sys.top, 0, Math.max(sys.bottom, Ui.dp(this, 8)));
+            } else {
+                v.setPadding(0, 0, 0, 0);
+                if (searchPage != null) {
+                    searchPage.applyInsets(sys.top, Math.max(sys.bottom, Ui.dp(this, 8)));
+                }
+            }
             return insets;
         });
+        if (!padSelf && searchPage != null) {
+            searchPage.applyInsets(insetTop, Math.max(insetBottom, Ui.dp(this, 8)));
+        }
         layer.requestApplyInsets();
     }
 

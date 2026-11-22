@@ -473,6 +473,8 @@ public final class Models {
             Comment cm = new Comment();
             cm.id = o.optLong("id", 0);
             cm.nickname = o.optString("nickname", o.optString("user_name", "匿名"));
+            // 站内的人机评论：昵称就是「XX网友 / XX网页」这种省市 + 固定后缀，直接不展示
+            if (isBotNickname(cm.nickname)) continue;
             cm.content = o.optString("content", o.optString("text", ""));
             cm.time = o.optString("time", o.optString("created_at", ""));
             cm.region = o.optString("ip_region", "");
@@ -483,6 +485,44 @@ public final class Models {
             out.add(cm);
         }
         return out;
+    }
+
+    /** 省级行政区（人机评论昵称的前半段） */
+    private static final String[] REGIONS = {
+            "北京", "天津", "上海", "重庆", "河北", "山西", "辽宁", "吉林", "黑龙江",
+            "江苏", "浙江", "安徽", "福建", "江西", "山东", "河南", "湖北", "湖南",
+            "广东", "广西", "海南", "四川", "贵州", "云南", "西藏", "陕西", "甘肃",
+            "青海", "宁夏", "新疆", "内蒙古", "香港", "澳门", "台湾"
+    };
+
+    /** 人机昵称的固定后缀 */
+    private static final String[] BOT_TAILS = {
+            "网友", "网页", "网民", "网虫", "網頁", "網民", "网友."
+    };
+
+    /**
+     * 人机评论判定：昵称 = 省级行政区 + 固定后缀（可带数字尾巴），例如
+     * 「安徽网页」「广东网友」「江苏网友123」。
+     *
+     * 只按昵称形态判，不看正文与 IP 属地 —— 真人完全可能取这种名字的比例极低，
+     * 而站内这批机器号清一色是这个形态，误杀风险远小于收益。
+     */
+    public static boolean isBotNickname(String nickname) {
+        if (nickname == null) return false;
+        String n = nickname.trim();
+        if (n.isEmpty()) return false;
+        for (String region : REGIONS) {
+            if (!n.startsWith(region)) continue;
+            String tail = n.substring(region.length()).trim();
+            // 去掉末尾数字（「广东网友12」）
+            int cut = tail.length();
+            while (cut > 0 && Character.isDigit(tail.charAt(cut - 1))) cut--;
+            tail = tail.substring(0, cut);
+            for (String t : BOT_TAILS) {
+                if (tail.equals(t)) return true;
+            }
+        }
+        return false;
     }
 
     public static List<Category> categories(JSONArray arr) {

@@ -20,12 +20,27 @@ import android.view.View;
 public final class DockBackdrop {
 
     /**
-     * 采样降采样倍数。玻璃自身叠了 blur(8dp) + vibrancy，3 倍降采样再双线性放大
+     * 采样降采样倍数。玻璃自身叠了 blur(2dp) + vibrancy，3 倍降采样再双线性放大
      * 看不出差别，但软件重绘的像素面积只有 2 倍时的 44%，主线程压力直接砍一半。
      */
     private static final int DS = 3;
-    /** 采样最短间隔：对齐 60Hz 一个 vsync，一次滑动里同一帧不重复重绘 */
-    private static final long MIN_INTERVAL_NS = 16_000_000L;
+    /**
+     * 运动中的降采样倍数。
+     *
+     * 静止时用 3 倍（观感最好）；一旦进入连续采样（滚动 / 惯性），改 4 倍 ——
+     * 软件重绘面积降到 56%，画面本来就在飞，隔着 2dp 模糊看不出差别。
+     * 停下来后第一次采样自动回到 3 倍，静止外观与之前完全一致。
+     */
+    private static final int DS_MOVING = 4;
+    /** 距上次采样小于这个间隔就算「在动」 */
+    private static final long MOVING_WINDOW_NS = 150_000_000L;
+    /**
+     * 采样最短间隔：30fps。
+     *
+     * 玻璃自身叠了 blur(2dp) + vibrancy + 3 倍降采样，30fps 与 60fps 的折射看不出差别，
+     * 但滚动时主线程上的软件重绘少了一半 —— 首页滑动掉帧主要来自这里。
+     */
+    private static final long MIN_INTERVAL_NS = 32_000_000L;
 
     private final Backdrop.RegionSampler sampler = new Backdrop.RegionSampler();
     private final Rect region = new Rect();
@@ -92,10 +107,12 @@ public final class DockBackdrop {
         if (w <= 0 || h <= 0) return;
         if (!source.isAttachedToWindow() || !target.isAttachedToWindow()) return;
         long now = System.nanoTime();
+        boolean moving = now - lastSampleNs < MOVING_WINDOW_NS;
         // 自适应节流：上一帧采样花了多久，就至少隔两倍时间再来一次。
         // 固定 16ms 在页面图文多的时候会连续占满主线程，手感就「不跟手」了。
         long costNs = sampler.lastCostMs() * 1_000_000L;
-        long minGap = Math.max(MIN_INTERVAL_NS, costNs * 2L);
+        // 上一帧越贵，间隔拉得越长（3 倍代价）：宁可玻璃少更新两帧，也不能把帧预算吃光
+        long minGap = Math.max(MIN_INTERVAL_NS, costNs * 3L);
         if (!force && now - lastSampleNs < minGap) return;
         lastSampleNs = now;
 
@@ -105,7 +122,7 @@ public final class DockBackdrop {
         int oy = targetLoc[1] - sourceLoc[1];
         region.set(ox, oy, ox + w, oy + h);
 
-        final Bitmap bmp = sampler.sample(DS, region,
+        final Bitmap bmp = sampler.sample(moving ? DS_MOVING : DS, region,
                 c -> Backdrop.drawRegionCheap(source, c, region));
         if (bmp == null || bmp == bitmap) {
             // RegionSampler 复用同一张位图：内容已更新，也要通知 Compose 重绘

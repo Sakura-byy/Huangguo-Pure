@@ -168,6 +168,19 @@ fun LiquidBottomTabs(
             label = "glowSpeed"
         )
 
+        // 滑动速度（归一化到 -1..1）：只驱动胶囊果冻拉伸。
+        // 用 Animatable 由手势协程直接驱动，不在 composition 里读状态 ——
+        // 否则每来一个 MOVE 都会重组一次 Dock，跟手感直接被拖没。
+        val velocityFlex = remember { Animatable(0f) }
+        val pushFlex: (Float) -> Unit = { target ->
+            animationScope.launch {
+                velocityFlex.animateTo(
+                    target.fastCoerceIn(-1f, 1f),
+                    spring(dampingRatio = 0.52f, stiffness = 260f)
+                )
+            }
+        }
+
         // 外部选中（点击 / 返回键 / 页面内跳转）把指示器拉过去
         val externalIndex = selectedTabIndex()
         LaunchedEffect(externalIndex) {
@@ -177,13 +190,16 @@ fun LiquidBottomTabs(
             }
         }
 
+        // 栏体内缩量（与容器玻璃的 padding(4.dp) 一致）：槽位、指示器、按压高光都用它做起始偏移
+        val barInsetPx = with(density) { BAR_INSET.toPx() }
+
         val interactiveHighlight = remember(animationScope) {
             InteractiveHighlight(
                 animationScope = animationScope,
                 position = { size, _ ->
                     Offset(
-                        if (isLtr) (dampedDragAnimation.value + 0.5f) * tabWidth + panelOffset
-                        else size.width - (dampedDragAnimation.value + 0.5f) * tabWidth + panelOffset,
+                        if (isLtr) barInsetPx + (dampedDragAnimation.value + 0.5f) * tabWidth + panelOffset
+                        else size.width - barInsetPx - (dampedDragAnimation.value + 0.5f) * tabWidth + panelOffset,
                         size.height / 2f
                     )
                 }
@@ -210,8 +226,10 @@ fun LiquidBottomTabs(
                 glowAngleTarget = 45f +
                         ((down.position.x - slot * tw) / tw - 0.5f) * 150f
                 glowSpeedTarget = 0f
+                pushFlex(0f)
                 val startX = down.position.x
                 var lastX = startX
+                var lastT = down.uptimeMillis
                 var dragged = false
                 while (true) {
                     val e = awaitPointerEvent()
@@ -220,20 +238,29 @@ fun LiquidBottomTabs(
                     if (abs(c.position.x - startX) > viewConfiguration.touchSlop) dragged = true
                     val dx = c.position.x - lastX
                     lastX = c.position.x
+                    val dt = (c.uptimeMillis - lastT).coerceAtLeast(1L)
+                    lastT = c.uptimeMillis
                     if (dx != 0f) {
                         // 光纹跟手：方向随拖动边转，速度决定高光扩散与折射强度
                         glowSpeedTarget = (dx / tw).fastCoerceIn(-1f, 1f) * 7f
                         glowAngleTarget = wrapDegrees(glowAngleTarget + dx / tw * 70f)
+                        // 胶囊形变跟手：每秒移动几个 Tab，6 Tab/s 记满
+                        pushFlex((dx / dt) / tw * 1000f / 9f)
+                    } else {
+                        pushFlex(0f)
                     }
                     if (dragged && dx != 0f) {
-                        dampedDragAnimation.updateValue(
-                            (dampedDragAnimation.targetValue + dx / tw)
+                        // 跟手：位置直接按「按下时的槽位 + 手指总位移」算，不用增量累加，
+                        // 也不经过弹簧（弹簧只在抬手吸附时用）—— 胶囊中心与手指 1:1
+                        dampedDragAnimation.trackValue(
+                            (slot + (c.position.x - startX) / tw)
                                 .fastCoerceIn(0f, (count - 1).toFloat())
                         )
                         c.consume()
                     }
                 }
                 glowSpeedTarget = 0f
+                pushFlex(0f)
                 pointerDown = (pointerDown - 1).coerceAtLeast(0)
                 if (dragged) {
                     val target = dampedDragAnimation.value.fastRoundToInt()
@@ -255,14 +282,28 @@ fun LiquidBottomTabs(
             }
         }
 
-        // 胶囊尺寸：按压时真实放大（56dp → 78dp），上下各越出 64dp 栏体 7dp
+        // 胶囊尺寸：只有「按压放大」（56dp → 78dp）走 composition；
+        // 位移与滑动拉伸全部放进 graphicsLayer 的 draw 阶段读状态 ——
+        // 在 composition 里读 dampedDragAnimation.value / velocityFlex 会每帧重组 + 重新measure，
+        // Dock 就跟不上手了。
         val pillScale = dampedDragAnimation.scaleX
         val pillHeightDp = BAR_INNER_HEIGHT * pillScale
-        val pillHeightPx = with(density) { pillHeightDp.toPx() }
-        val pillWidthDp = with(density) { (tabWidth * pillScale).toDp() }
-        val pillLeftPx = dampedDragAnimation.value * tabWidth +
-                (tabWidth - tabWidth * pillScale) / 2f + panelOffset
-        val pillTopPx = (viewHeightPx - pillHeightPx) / 2f
+        val basePillW = tabWidth * pillScale
+        // 果冻拉伸按「真实宽度」做：改尺寸而不是缩放整层 ——
+        // graphicsLayer 的 scaleX 会把胶囊里那层折射用的背景一起拉长，屏幕上就多出一个重影
+        val flex = abs(velocityFlex.value).fastCoerceIn(0f, 1f)
+        val stretchPx = basePillW * 0.30f * flex
+        val pillWidthDp = with(density) { (basePillW + stretchPx).toDp() }
+        val pillLeftPx = pillLeftFor(
+            slot = dampedDragAnimation.value,
+            tabWidth = tabWidth,
+            baseW = basePillW,
+            stretch = stretchPx,
+            panelOffset = panelOffset,
+            velocityFlex = velocityFlex.value,
+            padPx = barInsetPx
+        )
+        val pillTopPx = (viewHeightPx - with(density) { pillHeightDp.toPx() }) / 2f
         // 指示器背景 = 真实背景 + 着色层 + 栏体边框。
         // 第三层是「坐标无关」的画布：在胶囊自己的 DrawScope 里，先反向平移回视图坐标，
         // 再按 1:1 画栏体的亮边与内侧暗线。玻璃采样到它之后 lens 直接把边掰弯，
@@ -274,7 +315,20 @@ fun LiquidBottomTabs(
                 // 静止态不需要这层：栏体边框本来就画在视图里，胶囊没有折射也就没有「被掰弯」可言。
                 // 省掉每帧一次全宽 drawImage + 两条圆角描边。
                 if (dampedDragAnimation.pressProgress < 0.02f) return@rememberCanvasBackdrop
-                translate(-pillLeftPx, barTopPx - pillTopPx) {
+                val w = tabWidth * pillScale
+                val stretch = w * 0.30f * abs(velocityFlex.value).fastCoerceIn(0f, 1f)
+                // 与指示器本体用同一套夹取公式，保证折射出的栏体边框和胶囊严丝合缝
+                val leftPx = pillLeftFor(
+                    slot = dampedDragAnimation.value,
+                    tabWidth = tabWidth,
+                    baseW = w,
+                    stretch = stretch,
+                    panelOffset = panelOffset,
+                    velocityFlex = velocityFlex.value,
+                    padPx = barInsetPx
+                )
+                val topPx = (viewHeightPx - BAR_INNER_HEIGHT.toPx() * pillScale) / 2f
+                translate(-leftPx, barTopPx - topPx) {
                     // 亮边：就是被 lens 掰弯的那条栏体边框
                     drawRoundRect(
                         color = Color.White.copy(alpha = if (isLightTheme) 0.95f else 0.70f),
@@ -313,8 +367,8 @@ fun LiquidBottomTabs(
                         shape = { Capsule() },
                         effects = {
                             vibrancy()
-                            // 3.5dp：再降一档，背景画面与纹理更明显，仍留着玻璃的柔化
-                            blur(3.5f.dp.toPx())
+                            // 2.0dp：再降一档，背景画面与纹理更明显，仍留着玻璃的柔化
+                            blur(2.0f.dp.toPx())
                             // 静止态 lens 半径乘 0，结果和「不做」一样，但要多跑一趟全屏 shader
                             val p = dampedDragAnimation.pressProgress
                             if (p > 0.01f) lens(24f.dp.toPx() * p, 24f.dp.toPx() * p)
@@ -355,7 +409,7 @@ fun LiquidBottomTabs(
                             effects = {
                                 val progress = dampedDragAnimation.pressProgress
                                 vibrancy()
-                                blur(3.5f.dp.toPx())
+                                blur(2.0f.dp.toPx())
                                 // lens 半径本来就要乘 pressProgress，静止时是 0，
                                 // 与其跑一趟空 shader 不如直接不进管线
                                 if (progress > 0.01f) {
@@ -383,12 +437,9 @@ fun LiquidBottomTabs(
                     // 父级是 64dp 栏体，必须 unbounded 才允许胶囊长到 78dp 并越出上下边框
                     .wrapContentHeight(align = Alignment.CenterVertically, unbounded = true)
                     .graphicsLayer {
-                        val w = tabWidth * pillScale
                         translationX =
-                            if (isLtr) dampedDragAnimation.value * tabWidth +
-                                (tabWidth - w) / 2f + panelOffset
-                            else size.width - (dampedDragAnimation.value + 1f) * tabWidth -
-                                (tabWidth - w) / 2f + panelOffset
+                            if (isLtr) pillLeftPx
+                            else viewWidthPx - pillLeftPx - (basePillW + stretchPx)
                     }
                     .drawBackdrop(
                         backdrop = pillBackdrop,
@@ -453,6 +504,36 @@ private val BAR_HEIGHT = 64f.dp
 
 /** 指示器静止高度：栏体内侧 4dp 内缩后剩 56dp */
 private val BAR_INNER_HEIGHT = 56f.dp
+
+/**
+ * 栏体内缩量：容器玻璃的 `padding(4.dp)`，槽位从这里开始排。
+ *
+ * 指示器与槽位对齐时必须带上它 —— 漏掉这 4dp，首槽会贴住栏体左缘、
+ * 末槽右侧却空出 8dp，两侧安全边距就不一样了。
+ * 指示器本身不做边界夹取：按压放大 / 拖动拉伸时向两侧对称溢出栏体，
+ * 溢出量两侧相同（首槽左溢 = 末槽右溢），视觉上仍是居中的。
+ */
+private val BAR_INSET = 4f.dp
+
+/**
+ * 指示器左缘（视图坐标）：槽位居中 + 果冻拉伸。
+ *
+ * @param velocityFlex 负值表示往左拖（指示器朝左伸长），正值朝右伸长
+ * @param padPx 栏体内缩量，槽位从这里开始排
+ */
+private fun pillLeftFor(
+    slot: Float,
+    tabWidth: Float,
+    baseW: Float,
+    stretch: Float,
+    panelOffset: Float,
+    velocityFlex: Float,
+    padPx: Float
+): Float {
+    // padPx 必须加进来：槽位是从栏体内缩 4dp 之后才开始排的
+    val anchor = padPx + slot * tabWidth + (tabWidth - baseW) / 2f + panelOffset
+    return if (velocityFlex < 0f) anchor - stretch else anchor
+}
 
 /** 按压时指示器的放大倍率：56dp → 78dp，上下各越出栏体 7dp */
 private const val PRESSED_SCALE = 78f / 56f
